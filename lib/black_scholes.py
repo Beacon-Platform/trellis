@@ -1,30 +1,13 @@
+"""Black-Scholes helper functions
+
+See https://en.wikipedia.org/wiki/Black–Scholes_model
+"""
+
 import math
 
 
 def opt_price(is_call, spot, strike, texp, vol, rd, rf):
-    if vol <= 0 or texp <= 0 or strike <= 0:
-        # return intrinsic value
-        int_val = spot * math.exp(-rf * texp) - strike * math.exp(-rd * texp)
-        
-        if not is_call: 
-            int_val *= -1
-        
-        return max(int_val, 0)
-    
-    # otherwise calculate the standard value
-    d1 = calc_d1(spot, strike, texp, vol, rd, rf)
-    d2 = d1 - vol * math.sqrt(texp)
-    
-    if is_call:
-        return spot * math.exp(-rf * texp) * cnorm(d1) - strike * math.exp(-rd * texp) * cnorm(d2)
-    else:
-        return strike * math.exp(-rd * texp) * cnorm(-d2) - spot * math.exp(-rf * texp) * cnorm(-d1)
-
-
-def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
-    """Calculates the d_1 value in the Black-Scholes formula with continuous yield dividends
-    
-    See https://en.wikipedia.org/wiki/Black–Scholes_model
+    """Calculates option price
     
     Parameters
     ----------
@@ -46,8 +29,57 @@ def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
     Returns
     -------
     float
-        The value of d_1 for the given argument values
+        Price
     """
+    
+    if vol <= 0 or texp <= 0 or strike <= 0:
+        # return intrinsic value
+        int_val = spot * math.exp(-rf * texp) - strike * math.exp(-rd * texp)
+        
+        if not is_call: 
+            int_val *= -1
+        
+        return max(int_val, 0)
+    
+    # otherwise calculate the standard value
+    d1 = calc_d1(spot, strike, texp, vol, rd, rf)
+    d2 = d1 - vol * math.sqrt(texp)
+    
+    if is_call:
+        return spot * math.exp(-rf * texp) * cnorm(d1) - strike * math.exp(-rd * texp) * cnorm(d2)
+    else:
+        return strike * math.exp(-rd * texp) * cnorm(-d2) - spot * math.exp(-rf * texp) * cnorm(-d1)
+
+
+def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
+    """Calculates option delta
+    
+    Delta is the partial derivative of option price with respect to the spot price of the underlying
+    asset (∂C/∂S).
+    
+    Parameters
+    ----------
+    is_call : bool
+        True if the option is a call option, else False if a put option
+    spot : float
+        Current spot price (S_t)
+    strike : float
+        Strike price (K)
+    texp : float
+        Time to maturity (in years) (T - t)
+    vol : float
+        Volatility of returns of the underlying asset (σ)
+    rd : float
+        Risk free rate (r)
+    rf : float
+        Dividend yield (q)
+    
+    Returns
+    -------
+    float
+        Delta
+    """
+    
     if vol <= 0 or texp <= 0:
         # return intrinsic delta
         int_val = spot * math.exp(-rf * texp) - strike * math.exp(-rd * texp)
@@ -71,8 +103,6 @@ def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
 
 def calc_d1(spot, strike, texp, vol, rd, rf):
     """Calculates the d_1 value in the Black-Scholes formula with continuous yield dividends
-    
-    See https://en.wikipedia.org/wiki/Black–Scholes_model
     
     Parameters
     ----------

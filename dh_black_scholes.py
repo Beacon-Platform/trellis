@@ -4,15 +4,22 @@ Authors: Mark Higgins, Ben Pryke
 Summary: Deep hedging example implementation for pricing a vanilla option under BS
 Description: |
     Try out the deep hedging example from paper https://arxiv.org/abs/1802.03042.
-
+    
     That paper lays out a general scheme for both pricing a derivative portfolio and
     getting the fair upfront premium. It then applies it to an example of pricing a 
     vanilla option under the Heston model.
-
+    
     This example applies to a simpler case: pricing a vanilla option under the Black-Scholes
     model. In this case there is just one hedge instrument: the asset itself (for a delta
     hedge). We also leave off transaction costs, so this should reproduce standard BS
     pricing in the limit of continuous hedging.
+    
+    Under these standard risk neutral assumptions, the thing that minimises expected
+    shortfall is continuous hedging using the Black-Scholes delta. This example asks the
+    question: in the risk neutral limit, can a neural network independently learn to
+    approximate the Black-Scholes delta when trained to minimise expected shortfall?
+    The example is useful because it proves out the case in which we know what the answer
+    should be.
 """
 
 import logging
@@ -168,7 +175,8 @@ class Model():
             t = tf.constant([time_index * dt] * batch_size)
             inputs = tf.stack([prev_spot, t], 1)
             
-            # Generate the NN for this time step and get the outputs
+            # Generate the NN for this time step and get the outputs. By minimising expected
+            # shortfall, the output of the network is trained to approximate Black-Scholes delta.
             delta = self.compute_delta(inputs)[:, 0]
             
             rs = np.random.normal(0, sqrtdt, size=batch_size).astype(np.float32)
@@ -225,7 +233,9 @@ def train(model):
     
     # loop through the `batch_size`-sized subsets of the total paths and train on each
     for batch in range(n_batches):
-        # Get a random initial spot so that the training sees a proper range even at t=0
+        # Get a random initial spot so that the training sees a proper range even at t=0.
+        # We use the same initial spot price across the batch so that all MC paths are sampled
+        # from the same distribution, which is a requirement for our expected shortfall calculation.
         init_spot = S0 * math.exp(-vol * vol * texp / 2. + np.random.normal(0, 2. * vol * math.sqrt(texp)))
         model.init_spots.assign([init_spot] * batch_size)
         

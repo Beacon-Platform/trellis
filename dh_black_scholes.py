@@ -331,14 +331,13 @@ def calc_opt_price(model):
         
         # Remember stuff for the next time step
         prev_spots = spots
-        
-        # Add in the payoff if we're on the final time step.
-        if time_index == n_steps - 1:
-            payoff = np.maximum(phi * (spots - K), 0)
-            path_pnls -= payoff
-            path_pnls_bs -= payoff
-        
+
         log.info('%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f', time_index * dt, deltas.numpy().mean(), deltas.numpy().std(), spots.mean(), spots.std())
+    
+    # Compute the payoff some metrics
+    payoff = np.maximum(phi * (spots - K), 0)
+    path_pnls -= payoff
+    path_pnls_bs -= payoff
     
     n_pct = int((100 - pctile) / 100 * n_paths)
     path_pnls = np.sort(path_pnls)

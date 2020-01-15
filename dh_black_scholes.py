@@ -1,5 +1,9 @@
 """
-Copyright: Copyright (C) 2019 Beacon Platform Inc. - All Rights Reserved, not for redistribution
+Copyright: |
+    Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
+    Unauthorized copying of this file, via any medium, is strictly prohibited.
+    Proprietary and confidential.
+Product: Standard
 Authors: Mark Higgins, Ben Pryke
 Summary: Deep hedging example implementation for pricing a vanilla option under BS
 Description: |
@@ -28,7 +32,6 @@ import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 

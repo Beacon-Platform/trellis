@@ -1,6 +1,14 @@
-"""Black-Scholes helper functions
-
-See https://en.wikipedia.org/wiki/Black–Scholes_model
+"""
+Copyright: |
+    Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
+    Unauthorized copying of this file, via any medium, is strictly prohibited.
+    Proprietary and confidential.
+Product: Standard
+Authors: Mark Higgins, Ben Pryke
+Description: |
+    Black-Scholes helper functions for deep hedging.
+    
+    See https://en.wikipedia.org/wiki/Black–Scholes_model
 """
 
 import math

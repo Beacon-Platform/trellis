@@ -11,8 +11,7 @@ Description: |
     See https://en.wikipedia.org/wiki/Black–Scholes_model
 """
 
-import math
-
+import numpy as np
 from scipy.stats import norm
 
 
@@ -23,8 +22,8 @@ def opt_price(is_call, spot, strike, texp, vol, rd, rf):
     ----------
     is_call : bool
         True if the option is a call option, else False if a put option
-    spot : float
-        Current spot price (S_t)
+    spot : float or :obj:`numpy.array`
+        Current spot price(s) (S_t)
     strike : float
         Strike price (K)
     texp : float
@@ -43,22 +42,19 @@ def opt_price(is_call, spot, strike, texp, vol, rd, rf):
     """
     
     if vol <= 0 or texp <= 0 or strike <= 0:
-        # return intrinsic value
-        int_val = spot * math.exp(-rf * texp) - strike * math.exp(-rd * texp)
-        
-        if not is_call: 
-            int_val *= -1
-        
-        return max(int_val, 0)
+        # Return intrinsic value
+        int_val = spot * np.exp(-rf * texp) - strike * np.exp(-rd * texp)
+        sign = 1 if is_call else -1
+        return sign * np.maximum(int_val, 0)
     
-    # otherwise calculate the standard value
+    # Otherwise calculate the standard value
     d1 = calc_d1(spot, strike, texp, vol, rd, rf)
-    d2 = d1 - vol * math.sqrt(texp)
+    d2 = d1 - vol * np.sqrt(texp)
     
     if is_call:
-        return spot * math.exp(-rf * texp) * norm.cdf(d1) - strike * math.exp(-rd * texp) * norm.cdf(d2)
+        return spot * np.exp(-rf * texp) * norm.cdf(d1) - strike * np.exp(-rd * texp) * norm.cdf(d2)
     else:
-        return strike * math.exp(-rd * texp) * norm.cdf(-d2) - spot * math.exp(-rf * texp) * norm.cdf(-d1)
+        return strike * np.exp(-rd * texp) * norm.cdf(-d2) - spot * np.exp(-rf * texp) * norm.cdf(-d1)
 
 
 def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
@@ -71,8 +67,8 @@ def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
     ----------
     is_call : bool
         True if the option is a call option, else False if a put option
-    spot : float
-        Current spot price (S_t)
+    spot : float or :obj:`numpy.array`
+        Current spot price(s) (S_t)
     strike : float
         Strike price (K)
     texp : float
@@ -91,24 +87,20 @@ def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
     """
     
     if vol <= 0 or texp <= 0:
-        # return intrinsic delta
-        int_val = spot * math.exp(-rf * texp) - strike * math.exp(-rd * texp)
+        # Return intrinsic delta
+        int_val = spot * np.exp(-rf * texp) - strike * np.exp(-rd * texp)
         
         if not is_call:
             int_val *= -1
         
-        if int_val < 0:
-            return 0
-        elif is_call:
-            return math.exp(-rf * texp)
-        else:
-            return -math.exp(-rf * texp)
+        sign = 1 if is_call else -1
+        return np.where(int_val < 0, 0, sign * np.exp(-rf * texp))
     
-    # otherwise calculate the standard value
+    # Otherwise calculate the standard value
     if is_call:
-        return math.exp(-rf * texp) * norm.cdf(calc_d1(spot, strike, texp, vol, rd, rf))
+        return np.exp(-rf * texp) * norm.cdf(calc_d1(spot, strike, texp, vol, rd, rf))
     else:
-        return -math.exp(-rf * texp) * norm.cdf(-calc_d1(spot, strike, texp, vol, rd, rf))
+        return -np.exp(-rf * texp) * norm.cdf(-calc_d1(spot, strike, texp, vol, rd, rf))
 
 
 def calc_d1(spot, strike, texp, vol, rd, rf):
@@ -116,8 +108,8 @@ def calc_d1(spot, strike, texp, vol, rd, rf):
     
     Parameters
     ----------
-    spot : float
-        Current spot price (S_t)
+    spot : float or :obj:`numpy.array`
+        Current spot price(s) (S_t)
     strike : float
         Strike price (K)
     texp : float
@@ -134,4 +126,4 @@ def calc_d1(spot, strike, texp, vol, rd, rf):
     float
         The value of d_1 for the given argument values
     """
-    return (math.log(spot / strike) + (rd - rf + vol * vol / 2.) * texp) / vol / math.sqrt(texp)
+    return (np.log(spot / strike) + (rd - rf + vol * vol / 2.) * texp) / vol / np.sqrt(texp)

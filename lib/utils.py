@@ -11,7 +11,7 @@ Description: Utilities for the deep hedging scripts.
 import time
 
 
-def get_duration_since_desc(start):
+def get_duration_desc(start):
     """Returns a string {min}:{sec} describing the duration since `start`
     
     Parameters

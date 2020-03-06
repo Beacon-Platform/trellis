@@ -36,17 +36,16 @@ import seaborn as sns
 import tensorflow as tf
 
 import lib.black_scholes as bs
-from lib.utils import get_duration_since_desc
+from lib.utils import get_duration_desc
 
 sns.set(style='darkgrid')
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-# Set this to True if you want to pop up plots of delta vs spot to see how well the approx worked
-show_plots = True
-
-# Set this to True if you want to run the MC sim at the end to price the option
-price_option = True
+# Control toggles
+do_train = True # Actually train the model
+show_delta_plot = True # Pop up plot of delta vs spot
+show_pnl_plot = True # Run MC sim to compute PnL
 
 # Seed the RNGs so we get consistent results from run to run.
 seed = 2
@@ -58,18 +57,20 @@ np.random.seed(seed) # Used to generate Heston paths
 #     dS = mu S dt + vol S dz_s
 # where the model parameters are mu and vol. mu is the (real world) drift of the asset price S.
 S0 = 1 # initial spot price
-mu = 0.
-vol = 0.2
+mu = 0.0 # Expected upward spot drift, in years
+vol = 0.2 # Volatility
 
 # Define the parameters of the option we're trying to price. It's a European vanilla option
 texp = 0.25 # time to option expiration
 K = 1 # option strike price
-is_call = True # True, call option; False, put option
+is_call = True # True: call option; False: put option
+is_buy = False # True: buying a call/put; False: selling a call/put
 phi = 1 if is_call else -1 # Call or put
+psi = 1 if is_buy else -1 # Buy or sell
 
 # Define the parameters of the Monte Carlo simulation we'll run to train the neural network
 n_steps = 100 # number of time steps
-n_paths = 1000000 # number of MC paths
+n_paths = 1_000_000 # number of MC paths
 dt = texp / n_steps
 sqrtdt = math.sqrt(dt)
 
@@ -115,14 +116,14 @@ class Model():
         # Inputs
         # Our 2 inputs are spot price and time, which are mostly determined during the MC
         # simulation except for the initial spot at time 0
-        self.init_spots = tf.Variable(np.zeros(batch_size, dtype=np.float32))
+        self.init_spot = tf.Variable(0.)
     
     @property
     def trainable_variables(self):
         return self.W_nodes + self.b_nodes + [self.Wo, self.bo]
     
     @tf.function
-    def compute_delta(self, x):
+    def compute_hedge_delta(self, x):
         """Returns the output of the neural network at any point in time
         
         The delta size of the position required to hedge the option.
@@ -164,41 +165,39 @@ class Model():
         
         So we build a tensorflow graph to calculate that integrated PNL for a given
         path. Then we'll define a loss function (given a set of path PNLs) equal to the
-        expected shortfall of the integrated PNLs nfor each path in a batch. Make sure
+        expected shortfall of the integrated PNLs for each path in a batch. Make sure
         we're short the option so that (absent hedging) there's a -ve PNL.
         """
         
         pnl = np.zeros(batch_size).astype(np.float32)
-        prev_spot = self.init_spots
-        log_spots = np.zeros(batch_size).astype(np.float32)
+        spot = np.zeros(batch_size).astype(np.float32) + self.init_spot
+        log_spot = np.zeros(batch_size).astype(np.float32)
         
         # Run through the MC sim, generating path values for spots along the way
         for time_index in range(n_steps):
-            # Set up the neural network inputs
+            # Retrieve the neural network output, treating it as the delta hedge notional
+            # at the start of the timestep. By minimising expected shortfall, the output
+            # of the network is trained to approximate Black-Scholes delta.
             t = tf.constant([time_index * dt] * batch_size)
-            inputs = tf.stack([prev_spot, t], 1)
-            
-            # Generate the NN for this time step and get the outputs. By minimising expected
-            # shortfall, the output of the network is trained to approximate Black-Scholes delta.
-            delta = self.compute_delta(inputs)[:, 0]
-            
-            rs = np.random.normal(0, sqrtdt, size=batch_size).astype(np.float32)
-            log_spots += (mu - vol * vol / 2.) * dt + vol * rs
+            inputs = tf.stack([spot, t], 1)
+            delta = self.compute_hedge_delta(inputs)[:, 0]
             
             # Get the spots at the end of the interval and add them to the variable dictionary
-            spot = self.init_spots * np.exp(log_spots)
+            rs = tf.random.normal([batch_size], 0, sqrtdt)
+            log_spot += (mu - vol * vol / 2.) * dt + vol * rs
+            new_spot = self.init_spot * tf.math.exp(log_spot)
             
-            # Calculate the PNL from spot change
-            spot_change = tf.subtract(spot, prev_spot)
-            inc_pnl = tf.multiply(delta, spot_change)
-            pnl = tf.add(pnl, inc_pnl)
+            # Calculate the PNL from spot change and dynamically delta hedge
+            spot_change = new_spot - spot
+            inc_pnl = delta * spot_change
+            pnl += inc_pnl
             
             # Remember values for the next step
-            prev_spot = spot
+            spot = new_spot
         
         # Calculate the final payoff
-        payoff = tf.maximum(phi * (prev_spot - K), 0)
-        pnl = tf.subtract(pnl, payoff) # note we subtract - we sell the option
+        payoff = psi * tf.maximum(phi * (spot - K), 0)
+        pnl += payoff # Note we sell the option here
         
         return pnl
     
@@ -212,9 +211,8 @@ class Model():
         """
         
         pnl = self.compute_pnl()
-        pnl_neg = tf.multiply(pnl, -1)
         n_pct = int((100 - pctile) / 100 * batch_size)
-        pnl_past_cutoff = tf.nn.top_k(pnl_neg, n_pct)[0]
+        pnl_past_cutoff = tf.nn.top_k(-pnl, n_pct)[0]
         return tf.reduce_mean(pnl_past_cutoff)
     
     @tf.function
@@ -240,46 +238,59 @@ def train(model):
         # We use the same initial spot price across the batch so that all MC paths are sampled
         # from the same distribution, which is a requirement for our expected shortfall calculation.
         init_spot = S0 * math.exp(-vol * vol * texp / 2. + np.random.normal(0, 2. * vol * math.sqrt(texp)))
-        model.init_spots.assign([init_spot] * batch_size)
+        model.init_spot.assign(init_spot)
         
         # Now we've got the inputs set up for the training - run the training step
         optimizer.minimize(model.compute_loss, model.trainable_variables)
         
         # Log some stats as we train
         if batch % batch_size == 0:
-            est_mean = -bs.opt_price(is_call, init_spot, K, texp, vol, 0, 0)
+            est_mean = psi * bs.opt_price(is_call, init_spot, K, texp, vol, 0, 0)
             loss_value = model.compute_loss()
             mean_pnl = model.compute_mean_pnl()
-            duration = get_duration_since_desc(t0)
+            duration = get_duration_desc(t0)
             log.info('Batch %04d (%s): loss % .5f, mean % .5f, est mean % .5f, init spot % .5f', batch, duration, loss_value.numpy(), mean_pnl.numpy(), est_mean, init_spot)
     
-    duration = get_duration_since_desc(t0)
+    duration = get_duration_desc(t0)
     log.info('Total training time: %s', duration)
 
 
-def plot(model):
+def plot_deltas(model):
     """Plot out delta vs spot for a range of calendar times
     
     Calculated against the known closed-form BS delta.
+    
+    Parameters
+    ----------
+    model : `Model`
+        Trained model.
     """
     
-    f, axes = plt.subplots(2, 2, sharey=True, sharex=True)
-    f.suptitle('Delta vs spot vs time to maturity')
+    f, axes = plt.subplots(2, 2, sharex=True, sharey=True)
+    f.suptitle('Option delta hedge vs spot vs time to maturity')
     axes = axes.flatten()
     spot_fact = math.exp(3 * vol * math.sqrt(texp))
-    ts = [0, 0.1, 0.2, 0.25]
+    ts = [0., 0.1, 0.2, 0.25]
+    n_spots = 50
     
     for t_mid, ax in zip(ts, axes):
-        n_spots = 20
-        test_spots = np.linspace(S0 / spot_fact, S0 * spot_fact, n_spots).astype(np.float32)
-        test_inputs = np.transpose(np.array([test_spots, [t_mid] * n_spots], dtype=np.float32))
-        test_deltas = model.compute_delta(test_inputs)
-        test_deltas = test_deltas[:, 0]
-        log.info('Delta: mean = % .5f, std = % .5f', test_deltas.numpy().mean(), test_deltas.numpy().std())
-        est_deltas = [bs.opt_delta(is_call, spot, K, texp - t_mid, vol, 0, 0) for spot in test_spots]
+        # Prepare test inputs
+        test_spot = np.linspace(S0 / spot_fact, S0 * spot_fact, n_spots).astype(np.float32)
+        test_input = np.transpose(np.array([test_spot, [t_mid] * n_spots], dtype=np.float32))
+        
+        # Compute neural network delta
+        test_delta = model.compute_hedge_delta(test_input)[:, 0].numpy()
+        log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
+        
+        # Compute Black Scholes delta
+        # The hedge will have the opposite sign as the option we are hedging,
+        # ie the hedge of a long call is a short call, so we flip psi.
+        est_deltas = -psi * bs.opt_delta(is_call, test_spot, K, texp - t_mid, vol, 0, 0)
+        
+        # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t_mid))
-        nn_plot, = ax.plot(test_spots, test_deltas)
-        bs_plot, = ax.plot(test_spots, est_deltas)
+        nn_plot, = ax.plot(test_spot, test_delta)
+        bs_plot, = ax.plot(test_spot, est_deltas)
     
     ax.legend([nn_plot, bs_plot], ['Network', 'Black Scholes'])
     f.text(0.5, 0.04, 'Spot', ha='center')
@@ -288,87 +299,141 @@ def plot(model):
     plt.show()
 
 
-def calc_opt_price(model):
-    """calculate the option price from this optimal hedging strategy. We calculate the expected shortfall; the 
-    option price is just that, since adding cash to make it zero is the minimum price we'd need to accept.
-    This of course is like an "offer" price because it includes some risk aversion for PNL noise around the 
-    mean - but if we've got an accurate hedging strategy then it's not going to be much.
+def calc_expected_shortfall(pnls):
+    """Calculate the expected shortfall across a number of paths.
+    
+    The option price is just that, too, since adding cash to make it zero is the minimum
+    price we'd need to accept. This of course is like an "offer" price because it includes
+    some risk aversion for PNL noise around the mean - but if we've got an accurate
+    hedging strategy then it's not going to be much.
+    
+    Parameters
+    ----------
+    pnls : :obj:`numpy.array`
+        Array of pnls for a number of paths.
+    """
+    
+    n_pct = int((100 - pctile) / 100 * n_paths)
+    pnls = np.sort(pnls)
+    price = -pnls[:n_pct].mean()
+    
+    return price
+
+
+def calc_pnls(model, n_paths=100_000):
+    """Calculate the pnls from this optimal hedging strategy.
+    
+    Parameters
+    ----------
+    model : :obj:`Model`
+        Trained model.
+    n_paths : int
+        Number of paths to simulate.
+    
+    Returns
+    -------
+    tuple of :obj:`numpy.array`
+        (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
     """
     
     t0 = time.time()
     
-    log_spots = np.zeros(n_paths, dtype=np.float32)
-    path_pnls = np.zeros(n_paths, dtype=np.float32)
-    path_pnls_bs = np.zeros(n_paths, dtype=np.float32)
-    prev_spots = np.zeros(n_paths, dtype=np.float32) + S0
-    
-    inputs = np.transpose(np.array([prev_spots, [0] * n_paths], dtype=np.float32))
-    deltas = model.compute_delta(inputs)
-    deltas = deltas[:, 0]
-    
-    deltas_bs = [bs.opt_delta(is_call, float(spot), K, texp, vol, 0, 0) for spot in prev_spots]
+    log_spot = np.zeros(n_paths, dtype=np.float32)
+    nn_path_pnls = np.zeros(n_paths, dtype=np.float32)
+    bs_path_pnls = np.zeros(n_paths, dtype=np.float32)
+    spot = np.zeros(n_paths, dtype=np.float32) + S0
     
     # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
     # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
     # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
     # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
     for time_index in range(n_steps):
-        rs = np.random.normal(0, sqrtdt, n_paths)
-        log_spots += (mu - vol * vol / 2.) * dt + vol * rs
-        
-        # Get the PNLs of the hedges over the interval
-        
-        t = (time_index + 1) * dt # end of interval
-        spots = S0 * np.exp(log_spots)
-        
-        path_pnls += deltas * (spots - prev_spots)
-        path_pnls_bs += deltas_bs * (spots - prev_spots)
-        
-        # Get the next step hedge notionals
-        inputs = tf.constant(np.transpose(np.array([spots, [t] * n_paths], dtype=np.float32)))
-        deltas = model.compute_delta(inputs)
-        deltas = deltas[:, 0]
+        # Get the hedge notionals at the start of the timestep
+        t = time_index * dt # Start of interval
+        nn_input = tf.constant(np.transpose(np.array([spot, [t] * n_paths], dtype=np.float32)))
+        nn_delta = model.compute_hedge_delta(nn_input)[:, 0].numpy()
         
         # Also get the deltas used Black-Scholes
-        deltas_bs = [bs.opt_delta(is_call, float(spot), K, texp - t, vol, 0, 0) for spot in spots]
+        bs_delta = -psi * bs.opt_delta(is_call, spot, K, texp - t, vol, 0, 0)
+        
+        # Advance spot to the end of the timestep
+        rs = np.random.normal(0, sqrtdt, n_paths)
+        log_spot += (mu - vol * vol / 2.) * dt + vol * rs
+        new_spot = S0 * np.exp(log_spot)
+        
+        # Get the PNLs of the hedges over the interval
+        spot_change = new_spot - spot
+        nn_path_pnls += nn_delta * spot_change
+        bs_path_pnls += bs_delta * spot_change
         
         # Remember stuff for the next time step
-        prev_spots = spots
-
-        log.info('%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f', time_index * dt, deltas.numpy().mean(), deltas.numpy().std(), spots.mean(), spots.std())
+        spot = new_spot
+        log.info('%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f', time_index * dt, nn_delta.mean(), nn_delta.std(), spot.mean(), spot.std())
     
-    # Compute the payoff some metrics
-    payoff = np.maximum(phi * (spots - K), 0)
-    path_pnls -= payoff
-    path_pnls_bs -= payoff
+    # Compute the payoff and some metrics
+    payoff = psi * np.maximum(phi * (spot - K), 0)
+    nn_path_pnls += payoff
+    bs_path_pnls += payoff
     
-    n_pct = int((100 - pctile) / 100 * n_paths)
-    path_pnls = np.sort(path_pnls)
-    price_dh = -path_pnls[:n_pct].mean()
-    path_pnls_bs = np.sort(path_pnls_bs)
-    price_bs_es = -path_pnls_bs[:n_pct].mean()
-    log.info('Deep hedging price = % .5f', price_dh)
-    log.info('Hedging price BS   = % .5f', price_bs_es)
-    log.info('BS price           = % .5f', bs.opt_price(is_call, S0, K, texp, vol, 0, 0))
+    # Calculate the expected shortfall.
+    nn_price = calc_expected_shortfall(nn_path_pnls)
+    bs_price_es = calc_expected_shortfall(bs_path_pnls)
+    bs_price = -psi * bs.opt_price(is_call, S0, K, texp, vol, 0, 0)
+    
+    log.info('Deep hedging price = % .5f', nn_price)
+    log.info('BS hedging price   = % .5f', bs_price_es)
+    log.info('BS price           = % .5f', bs_price)
     log.info('Mean payoff        = % .5f', payoff.mean())
-    log.info('Mean PNL           = % .5f', path_pnls.mean())
-    log.info('Std dev PNL        = % .5f', path_pnls.std())
+    log.info('DH mean PNL        = % .5f', nn_path_pnls.mean())
+    log.info('DH std dev PNL     = % .5f', nn_path_pnls.std())
     
-    duration = get_duration_since_desc(t0)
+    duration = get_duration_desc(t0)
     log.info('Simulation time: %s', duration)
+    
+    # Unhedged, bs hedged, nn hedged
+    return payoff, bs_path_pnls, nn_path_pnls
+
+
+def plot_pnls(pnls, labels=None, trim_tails=0):
+    """Plot histogram comparing pnls
+    
+    pnls : list of :obj:`numpy.array`
+        Pnls to plot
+    labels : list of str
+        Labels to add to the legend, corresponding to pnls
+    trim_tails : int
+        Percentile to trim from each tail when plotting
+    """
+    
+    hist_range = (np.percentile(pnls, trim_tails), np.percentile(pnls, 100 - trim_tails))
+    plt.hist(pnls, range=hist_range, bins=100, edgecolor='none')
+    plt.title('Post-hedge PNL histogram')
+    plt.xlabel('PNL')
+    plt.ylabel('Frequency')
+    
+    if labels is not None:
+        plt.legend(labels)
+    
+    plt.tight_layout()
+    plt.show()
 
 
 def main():
     """Run the model"""
     
+    log.info('Hedging a %s %s', 'long' if is_buy else 'short', 'call' if is_call else 'put')
+    
     model = Model()
-    train(model)
     
-    if show_plots:
-        plot(model)
+    if do_train:
+        train(model)
     
-    if price_option:
-        calc_opt_price(model)
+    if show_delta_plot:
+        plot_deltas(model)
+    
+    if show_pnl_plot:
+        pnls = calc_pnls(model)
+        plot_pnls(pnls, labels=['Unhedged', 'Black-Scholes', 'Deep Hedging'], trim_tails=5)
 
 
 if __name__ == '__main__':

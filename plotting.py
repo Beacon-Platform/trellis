@@ -19,9 +19,9 @@ import numpy as np
 import scipy
 import seaborn as sns
 
-import lib.black_scholes as bs
-from lib.utils import get_duration_desc
-from va.model import Model, compute_analytical_bs_delta, test, train
+from utils import get_duration_desc
+import models.variable_annuity.analytics as analytics # TODO remove dependency
+from models.variable_annuity.model import log_training_progress # TODO remove dependency
 
 sns.set(style='darkgrid', palette='deep')
 plt.rcParams['figure.figsize'] = (8, 6)
@@ -122,7 +122,7 @@ def plot_deltas(model):
         # The hedge will have the opposite sign as the option we are hedging,
         # ie the hedge of a long call is a short call, so we flip psi.
         account = model.principal * test_spot / model.S0 * np.exp(-model.fee * t)
-        est_deltas = compute_analytical_bs_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, test_spot)
+        est_deltas = analytics.compute_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, test_spot)
         
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))
@@ -161,18 +161,7 @@ def plot_pnls(pnls, types, *, trim_tails=0):
     plt.show()
 
 
-def plot_heatmap(data, title, xlabel, xticklabels, ylabel, yticklabels):
-    # yticklabels = np.flip(yticklabels, axis=0)
-    # data = np.flip(data, axis=0)
-    sns.heatmap(data=data[::-1], annot=True, fmt=".4f", xticklabels=xticklabels, yticklabels=yticklabels[::-1])
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.tight_layout()
-    plt.show()
-
-
-def grid_search(title, xparam, xlabel, xvals, yparam, ylabel, yvals, *, repeats=3, **kwargs):
+def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, **kwargs):
     """Run the model"""
     
     t0 = time.time()
@@ -186,31 +175,48 @@ def grid_search(title, xparam, xlabel, xvals, yparam, ylabel, yvals, *, repeats=
             hparams = dict({xparam: x, yparam: y}, **kwargs)
             
             for _ in range(repeats):
-                model = Model(**hparams)
-                train(model)
-                errors[i, j] += test(model)
+                mdl = model(**hparams)
+                mdl.train(post_batch_callback=log_training_progress)
+                errors[i, j] += mdl.test()
             
             errors[i, j] /= repeats
             log.info('Error for (y=%f, x=%f): %.5f', y, x, errors[i, j])
     
-    log.info('Results')
+    log.info('Heatmap:')
     log.info(np.array2string(errors, separator=','))
     log.info('Total running time: %s', get_duration_desc(t0))
     
-    plot_heatmap(errors, title, xlabel, xvals, ylabel, yvals)
+    return errors
 
 
-def search_vol_vs_mu():
-    # mus = [0.0, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15]
-    # vols = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25]
-    vols = [0.05, 0.1, 0.15, 0.2, 0.25]
-    mus = [0.0, 0.05, 0.1, 0.15]
-    grid_search(
-        title='Deep Hedging error vs Black-Scholes',
-        xparam='vol',
-        xlabel='Vol',
-        xvals=vols,
-        yparam='mu',
-        ylabel='Expected annual drift',
-        yvals=mus,
-    )
+def plot_heatmap(model, title, xparam, xlabel, xvals, yparam, ylabel, yvals, *, repeats=3, **kwargs):
+    errors = compute_heatmap(model, title, xparam, xvals, yparam, yvals, repeats=repeats, **kwargs)
+    sns.heatmap(data=errors[::-1], annot=True, fmt=".4f", xticklabels=xvals, yticklabels=yvals[::-1])
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_paths(paths):
+    """Plot many paths to visualise Monte Carlo simulation over time."""
+    
+    n_paths = len(paths) - 1
+    plt.plot(paths)
+    plt.title('Monte Carlo simulation of spot prices over time')
+    plt.xlabel('Time')
+    plt.ylabel('Spot')
+    plt.gca().set_xlim([0, n_paths])
+    plt.show()
+
+
+def plot_spot_hist(paths, time_index):
+    """Plot histogram of spot prices at a given index in the simulation."""
+    
+    plt.hist(paths[time_index, :], bins=50)
+    plt.title('Histogram of spot prices at simulation step {}'.format(time_index))
+    plt.xlabel('Spot')
+    plt.ylabel('Frequency')
+    plt.tight_layout()
+    plt.show()

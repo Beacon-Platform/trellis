@@ -35,14 +35,28 @@ import scipy
 import seaborn as sns
 import tensorflow as tf
 
-import lib.black_scholes as bs
-from lib.utils import get_duration_desc
-from va.model import Model, compute_expected_shortfalls, set_seed, test, train
-from va.plot import (ResultTypes, grid_search, plot_deltas, plot_loss,
-                     plot_pnls, search_vol_vs_mu)
+from models.variable_annuity.model import VariableAnnuity, simulate, set_seed, log_training_progress
+from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+
+def search_vol_vs_mu():
+    # mus = [0.0, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15]
+    # vols = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25]
+    vols = [0.05, 0.1, 0.15, 0.2, 0.25]
+    mus = [0.0, 0.05, 0.1, 0.15]
+    plot_heatmap(
+        model=VariableAnnuity,
+        title='Deep Hedging error vs Black-Scholes',
+        xparam='vol',
+        xlabel='Vol',
+        xvals=vols,
+        yparam='mu',
+        ylabel='Expected annual drift',
+        yvals=mus,
+    )
 
 
 def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl_plot=True, **hparams):
@@ -59,10 +73,11 @@ def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl
         Run MC sim to compute PnL
     """
     
-    model = Model(**hparams)
+    model = VariableAnnuity(**hparams)
+    # model.restore()
     
     if do_train:
-        losses = train(model)
+        losses = model.train(post_batch_callback=log_training_progress)
         
         if show_loss_plot:
             plot_loss(losses)
@@ -71,16 +86,18 @@ def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl
         plot_deltas(model)
     
     if show_pnl_plot:
-        pnls = compute_expected_shortfalls(model)
+        log.info('Testing on %d paths', model.n_test_paths)
+        pnls = simulate(model)
         plot_pnls(pnls, types=(ResultTypes.UNHEDGED, ResultTypes.BLACK_SCHOLES, ResultTypes.DEEP_HEDGING))
 
 
 if __name__ == '__main__':
     set_seed(2)
-    run_once(learning_rate=5e-3, n_batches=10_000, mu=0.0, vol=0.2, n_test_paths=100_000, S0=1.)
+    run_once(learning_rate=5e-3, n_batches=100, mu=0.0, vol=0.2, n_test_paths=1_000, S0=1.)
     # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
     # search_vol_vs_mu()
-    # grid_search(
+    # plot_heatmap(
+    #     model=VariableAnnuity,
     #     title='Deep Hedging error vs Black-Scholes',
     #     xparam='learning_rate',
     #     xlabel='Learning rate',
@@ -90,7 +107,8 @@ if __name__ == '__main__':
     #     yvals=[100, 500, 1000, 5000, 10000],
     # )
 
-    # grid_search(
+    # plot_heatmap(
+    #     model=VariableAnnuity,
     #     title='Deep Hedging error vs Black-Scholes',
     #     xparam='n_layers',
     #     xlabel='Hidden layers',
@@ -102,7 +120,8 @@ if __name__ == '__main__':
     #     n_batches=5000,
     # )
 
-    # grid_search(
+    # plot_heatmap(
+    #     model=VariableAnnuity,
     #     title='Deep Hedging error vs Black-Scholes',
     #     xparam='beta_1',
     #     xlabel='Adam Beta 1',

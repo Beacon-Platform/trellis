@@ -34,7 +34,7 @@ import numpy as np
 import seaborn as sns
 import tensorflow as tf
 
-import lib.black_scholes as bs
+import models.european_option.analytics as analytics
 from lib.utils import get_duration_desc
 
 sns.set(style='darkgrid')
@@ -101,7 +101,7 @@ class Model():
             if hidden_index == 0:
                 W = tf.Variable(tf.random.truncated_normal([2, n_hidden], stddev=0.1), trainable=True)
             else:
-                W = tf.Variable(tf.random.truncated_normal([n_hidden, n_hidden], stddev=0.1), trainable= True)
+                W = tf.Variable(tf.random.truncated_normal([n_hidden, n_hidden], stddev=0.1), trainable=True)
             
             self.b_nodes.append(b)
             self.W_nodes.append(W)
@@ -242,7 +242,7 @@ def train(model):
         
         # Log some stats as we train
         if batch % batch_size == 0:
-            est_mean = psi * bs.opt_price(is_call, init_spot, K, texp, vol, 0, 0)
+            est_mean = psi * analytics.opt_price(is_call, init_spot, K, texp, vol, 0, 0)
             loss_value = model.compute_loss()
             mean_pnl = model.compute_mean_pnl()
             duration = get_duration_desc(t0)
@@ -309,7 +309,7 @@ def calc_pnls(model, n_paths=100_000):
         nn_delta = model.compute_hedge_delta(nn_input)[:, 0].numpy()
         
         # Also get the deltas used Black-Scholes
-        bs_delta = -psi * bs.opt_delta(is_call, spot, K, texp - t, vol, 0, 0)
+        bs_delta = -psi * analytics.opt_delta(is_call, spot, K, texp - t, vol, 0, 0)
         
         # Advance spot to the end of the timestep
         rs = np.random.normal(0, sqrtdt, n_paths)
@@ -333,7 +333,7 @@ def calc_pnls(model, n_paths=100_000):
     # Report stats
     nn_price = psi * calc_expected_shortfall(nn_pnls)
     bs_price_es = psi * calc_expected_shortfall(bs_pnls)
-    bs_price = -psi * bs.opt_price(is_call, S0, K, texp, vol, 0, 0)
+    bs_price = -psi * analytics.opt_price(is_call, S0, K, texp, vol, 0, 0)
     duration = get_duration_desc(t0)
     
     log.info('Deep hedging price = % .5f', nn_price)
@@ -392,7 +392,7 @@ def plot_deltas(model):
         # Compute Black Scholes delta
         # The hedge will have the opposite sign as the option we are hedging,
         # ie the hedge of a long call is a short call, so we flip psi.
-        est_deltas = -psi * bs.opt_delta(is_call, test_spot, K, texp - t, vol, 0, 0)
+        est_deltas = -psi * analytics.opt_delta(is_call, test_spot, K, texp - t, vol, 0, 0)
         
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))

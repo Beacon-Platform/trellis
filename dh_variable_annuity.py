@@ -27,7 +27,11 @@ Description: |
 """
 
 import logging
+import os
 import time
+
+# TODO Move this into models/utils too
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # Disable GPU
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,7 +39,8 @@ import scipy
 import seaborn as sns
 import tensorflow as tf
 
-from models.variable_annuity.model import VariableAnnuity, simulate, set_seed, log_training_progress
+
+from models.variable_annuity.model import VariableAnnuity, simulate, set_seed
 from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 
 log = logging.getLogger(__name__)
@@ -59,7 +64,8 @@ def search_vol_vs_mu():
     )
 
 
-def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl_plot=True, **hparams):
+def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_plot=True, **hparams):
+    # TODO move to a utils module in models and pass model as param
     """
     Parameters
     ----------
@@ -74,13 +80,16 @@ def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl
     """
     
     model = VariableAnnuity(**hparams)
-    # model.restore()
     
     if do_train:
-        losses = model.train(post_batch_callback=log_training_progress)
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, mode='max', restore_best_weights=True)
+        model_checkpoint = tf.keras.callbacks.ModelCheckpoint(model.checkpoint_prefix, monitor='val_loss', save_best_only=True, mode='max')
+        history = model.train(callbacks=[early_stopping, model_checkpoint])
         
         if show_loss_plot:
-            plot_loss(losses)
+            plot_loss(history.history['val_loss'])
+    else:
+        model.restore()
     
     if show_delta_plot:
         plot_deltas(model)
@@ -92,8 +101,8 @@ def run_once(do_train=True, show_loss_plot=False, show_delta_plot=True, show_pnl
 
 
 if __name__ == '__main__':
-    set_seed(2)
-    run_once(learning_rate=5e-3, n_batches=100, mu=0.0, vol=0.2, n_test_paths=1_000, S0=1.)
+    set_seed(2) # TODO can we stick this fn in utils/examples in models?
+    run_once(learning_rate=5e-3, n_batches=10_000, mu=0.0, vol=0.2, n_test_paths=100_000, S0=1.)
     # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
     # search_vol_vs_mu()
     # plot_heatmap(

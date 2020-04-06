@@ -21,7 +21,7 @@ import seaborn as sns
 
 from utils import get_duration_desc
 import models.variable_annuity.analytics as analytics # TODO remove dependency
-from models.variable_annuity.model import log_training_progress # TODO remove dependency
+
 
 sns.set(style='darkgrid', palette='deep')
 plt.rcParams['figure.figsize'] = (8, 6)
@@ -80,17 +80,25 @@ def plot_thist(data, n_bins=30):
     plt.show()
 
 
-def plot_loss(losses, window1=50, window2=500):
-    smoothed1 = np.convolve(losses, np.ones((window1,)) / window1, mode='valid')
-    smoothed2 = np.convolve(losses, np.ones((window2,)) / window2, mode='valid')
-    plt.plot(losses)
-    plt.plot(smoothed1)
-    plt.plot(smoothed2)
+def plot_loss(losses, *, smoothing_windows=(5, 25), min_points=10):
+    curves = [losses]
+    labels = ['Loss']
+    
+    for window in smoothing_windows:
+        if len(curves) > window * min_points:
+            smoothed = np.convolve(losses, np.ones((window,)) / window, mode='valid')
+            curves.append(smoothed)
+            labels.append(f'Mean of {window}')
+    
+    for curve in curves:
+        plt.plot(range(1, len(losses) + 1), curve)
+    
     plt.title('Loss over time')
-    plt.xlabel('Batch')
+    plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.legend(labels=['Loss', f'Mean of {window1}', f'Mean of {window2}'])
+    plt.legend(labels=labels)
     plt.tight_layout()
+    plt.gca().set_xlim([1, len(losses)])
     plt.show()
 
 
@@ -105,7 +113,7 @@ def plot_deltas(model):
     axes = axes.flatten()
     spot_fact = np.exp(3 * model.vol * model.texp ** 0.5)
     ts = [0., model.texp * 0.25, model.texp * 0.5, model.texp * 0.95]
-    n_spots = 20
+    n_spots = 1000
     
     for t, ax in zip(ts, axes):
         # Compute neural network delta
@@ -176,7 +184,7 @@ def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, **
             
             for _ in range(repeats):
                 mdl = model(**hparams)
-                mdl.train(post_batch_callback=log_training_progress)
+                mdl.train() # TODO add callbacks
                 errors[i, j] += mdl.test()
             
             errors[i, j] /= repeats

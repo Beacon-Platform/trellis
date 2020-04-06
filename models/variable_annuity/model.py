@@ -19,6 +19,8 @@ import numpy as np
 import scipy
 import seaborn as sns
 import tensorflow as tf
+from tensorflow.python.keras.callbacks import CallbackList # pylint: disable=no-name-in-module, import-error
+from tensorflow.python.keras.callbacks import configure_callbacks # pylint: disable=no-name-in-module, import-error
 
 import models.variable_annuity.analytics as analytics
 from utils import calc_expected_shortfall, get_duration_desc
@@ -83,7 +85,7 @@ class Hyperparams:
     @property
     def checkpoint_directory(self):
         """Directory in which to save checkpoint files."""
-        return self.root_checkpoint_dir + md5(str(hash((
+        return self.root_checkpoint_dir + 'model_' + md5(str(hash((
             self.n_layers, self.n_hidden, self.learning_rate, self.batch_size,
             self.S0, self.mu, self.vol, self.texp, self.principal, self.lam
         ))).encode('utf-8')).hexdigest()
@@ -224,91 +226,87 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
     
     @tf.function
     def generate_random_init_spot(self):
+        # TODO does this belong here?
         r = tf.random.normal((1,), 0, 2. * self.vol * self.texp ** 0.5)[0]
         return self.S0 * tf.exp(-self.vol * self.vol * self.texp / 2. + r)
     
-    def train(self, post_batch_callback=None):
+    def train(self, optimizer=None, callbacks=None, *, verbose=1):
         """We'll train the network by running an MC simulation, batching up the paths into groups of batch_size paths"""
         
+        # Note that these aren't real epochs, but are used for monitoring val_loss (which is also different from loss...)
         n_paths = self.batch_size * self.n_batches
-        log.info('Training on %d paths over %d batches', n_paths, self.n_batches)
+        n_steps_per_epoch = 100
+        n_epochs = int(self.n_batches / n_steps_per_epoch)
+        
+        log.info('Training on %d paths over %d batches in %d epochs', n_paths, self.n_batches, n_epochs)
+        
+        if not isinstance(callbacks, CallbackList):
+            callbacks = list(callbacks or [])
+            callbacks = configure_callbacks(
+                callbacks,
+                self,
+                do_validation=True,
+                batch_size=self.batch_size,
+                epochs=n_epochs,
+                steps_per_epoch=n_steps_per_epoch,
+                verbose=verbose,
+            )
         
         # Use the Adam optimizer, which is gradient descent which also evolves
         # the learning rate appropriately (the learning rate passed in is the initial`
         # learning rate)
-        optimizer = tf.keras.optimizers.Adam(self.learning_rate)
-        # checkpoint = self.restore(optimizer=optimizer)
-        self.compile(optimizer=optimizer, loss=self.compute_loss)
+        if optimizer is None:
+            optimizer = tf.keras.optimizers.Adam(self.learning_rate)
+        
         # Remember the start time - we'll log out the total time for training later
+        callbacks.on_train_begin()
         t0 = time.time()
-        losses = []
         
         # Loop through the `batch_size`-sized subsets of the total paths and train on each
-        for batch in range(self.n_batches):
-            # Get a random initial spot so that the training sees a proper range even at t=0.
-            # We use the same initial spot price across the batch so that all MC paths are sampled
-            # from the same distribution, which is a requirement for our expected shortfall calculation.
-            init_spot = self.generate_random_init_spot()
-            compute_loss = lambda: self.compute_loss(init_spot)
+        for epoch in range(n_epochs):
+            callbacks.on_epoch_begin(epoch)
             
-            # Now we've got the inputs set up for the training - run the training step
-            optimizer.minimize(compute_loss, self.trainable_variables)
-            loss = compute_loss().numpy()
-            losses.append(loss)
+            for step in range(n_steps_per_epoch):
+                callbacks.on_train_batch_begin(step)
+                
+                # Get a random initial spot so that the training sees a proper range even at t=0.
+                # We use the same initial spot price across the batch so that all MC paths are sampled
+                # from the same distribution, which is a requirement for our expected shortfall calculation.
+                init_spot = self.generate_random_init_spot()
+                compute_loss = lambda: self.compute_loss(init_spot)
+                
+                # Now we've got the inputs set up for the training - run the training step
+                # TODO should we use a GradientTape and then call compute_loss and apply_gradients?
+                optimizer.minimize(compute_loss, self.trainable_variables)
+                
+                logs = {'batch': step, 'size': self.batch_size, 'loss': compute_loss().numpy()}
+                callbacks.on_train_batch_end(step, logs)
             
-            if post_batch_callback:
-                post_batch_callback(batch, t0, self, init_spot)
-        
-        # checkpoint.save(file_prefix=self.checkpoint_prefix)
+            logs.update(val_loss=self.test())
+            callbacks.on_epoch_end(epoch, logs)
+            
+            if self.stop_training:
+                break
         
         duration = get_duration_desc(t0)
         log.info('Total training time: %s', duration)
         
-        return losses
+        callbacks.on_train_end()
+        return self.history
     
-    def test(self, *, verbosity=0):
+    def test(self, *, verbose=0):
         """Test model performance by comparing with analytically computed Black-Scholes hedges."""
         
-        _, bs_es, nn_es = estimate_expected_shortfalls(self, verbosity=verbosity)
+        _, bs_es, nn_es = estimate_expected_shortfalls(self, verbose=verbose)
         
         return nn_es - bs_es
     
-    def restore(self, **kwargs):
-        """Restore model from checkpoint.
-        
-        Parameters
-        ----------
-        **kwargs
-            Objects passed directly to `Checkpoint` to be restored.
-        """
-        
-        checkpoint = tf.train.Checkpoint(model=self, **kwargs)
-        latest_checkpoint = tf.train.latest_checkpoint(self.checkpoint_directory)
-        checkpoint.restore(latest_checkpoint).expect_partial()
-        return checkpoint
-
-class VariableAnnuityCallback(tf.keras.callbacks.Callback):
-    pass
-    # def on_batch_end(batch, logs=None, freq=100): # t0, model, init_spot,
-    #     # Log some stats as we train
-    #     if batch % freq == 0:
-    #         test_score = model.test()
-    #         loss = model.compute_loss(init_spot).numpy()
-    #         mean_pnl = model.compute_mean_pnl(init_spot).numpy()
-    #         duration = get_duration_desc(t0)
-    #         log.info('Batch %04d (%s): test score % .5f, loss % .5f, mean % .5f, init spot % .5f', batch, duration, test_score, loss, mean_pnl, init_spot)
-
-def log_training_progress(batch, t0, model, init_spot, freq=100):
-    # Log some stats as we train
-    if batch % freq == 0:
-        test_score = model.test()
-        loss = model.compute_loss(init_spot).numpy()
-        mean_pnl = model.compute_mean_pnl(init_spot).numpy()
-        duration = get_duration_desc(t0)
-        log.info('Batch %04d (%s): test score % .5f, loss % .5f, mean % .5f, init spot % .5f', batch, duration, test_score, loss, mean_pnl, init_spot)
+    def restore(self):
+        """Restore model weights from most recent checkpoint."""
+        self.load_weights(self.checkpoint_prefix)
 
 
-def simulate(model, *, verbosity=1, write_to_tensorboard=False):
+def simulate(model, *, verbose=1, write_to_tensorboard=False):
     """Simulate the trading strategy and return the PNLs."""
     
     t0 = time.time()
@@ -359,7 +357,7 @@ def simulate(model, *, verbosity=1, write_to_tensorboard=False):
         # Remember values for the next step
         spot = new_spot
         
-        if verbosity >= 1:
+        if verbose != 0:
             log.info(
                 '%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f',
                 t, nn_delta.mean(), nn_delta.std(), spot.mean(), spot.std()
@@ -381,26 +379,26 @@ def simulate(model, *, verbosity=1, write_to_tensorboard=False):
     if write_to_tensorboard:
         writer.flush()
     
-    if verbosity >= 1:
+    if verbose != 0:
         duration = get_duration_desc(t0)
         log.info('Simulation time: %s', duration)
     
     return uh_pnls, bs_pnls, nn_pnls
 
 
-def estimate_expected_shortfalls(model, *, verbosity=1):
+def estimate_expected_shortfalls(model, *, verbose=1):
     """Estimate the unhedged, analytical, and model expected shortfalls via simulation.
     
     These estimates are also estimates of the fair price of the instrument.
     """
     
-    uh_pnls, bs_pnls, nn_pnls = simulate(model, verbosity=verbosity)
+    uh_pnls, bs_pnls, nn_pnls = simulate(model, verbose=verbose)
     
     uh_es = calc_expected_shortfall(uh_pnls, model.pctile)
     bs_es = calc_expected_shortfall(bs_pnls, model.pctile)
     nn_es = calc_expected_shortfall(nn_pnls, model.pctile)
     
-    if verbosity >= 1:
+    if verbose != 0:
         log.info('Unhedged ES      = % .5f (mean % .5f, std % .5f)', uh_es, np.mean(uh_pnls), np.std(uh_pnls))
         log.info('Deep hedging ES  = % .5f (mean % .5f, std % .5f)', nn_es, np.mean(nn_pnls), np.std(nn_pnls))
         log.info('Black-Scholes ES = % .5f (mean % .5f, std % .5f)', bs_es, np.mean(bs_pnls), np.std(bs_pnls))

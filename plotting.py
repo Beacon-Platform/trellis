@@ -102,7 +102,7 @@ def plot_loss(losses, *, smoothing_windows=(5, 25), min_points=10):
     plt.show()
 
 
-def plot_deltas(model):
+def plot_deltas(model, *, verbose=1):
     """Plot out delta vs spot for a range of calendar times
     
     Calculated against the known closed-form BS delta.
@@ -124,7 +124,9 @@ def plot_deltas(model):
         test_delta = model.compute_hedge_delta(test_input)[:, 0].numpy()
         test_delta = np.minimum(test_delta, 0) # pylint: disable=assignment-from-no-return
         test_delta *= (1 - np.exp(-model.lam * (model.texp - t))) * model.principal
-        log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
+        
+        if verbose != 0:
+            log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
         
         # Compute Black Scholes delta
         # The hedge will have the opposite sign as the option we are hedging,

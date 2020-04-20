@@ -77,6 +77,7 @@ class Hyperparams:
     
     def __setattr__(self, name, value):
         """Ensure the fair fee is kept up to date"""
+        # TODO Can we use non-trainable Variables to form a dependency tree so we don't need to update these without losing functionality?
         self.__dict__[name] = value
         
         if name in ('texp', 'gmdb_frac', 'S0', 'vol', 'lam'):
@@ -87,7 +88,8 @@ class Hyperparams:
         """Directory in which to save checkpoint files."""
         return self.root_checkpoint_dir + 'model_' + md5(str(hash((
             self.n_layers, self.n_hidden, self.learning_rate, self.batch_size,
-            self.S0, self.mu, self.vol, self.texp, self.principal, self.lam
+            self.S0, self.mu, self.vol, self.texp, self.principal, self.lam,
+            self.dt, self.pctile,
         ))).encode('utf-8')).hexdigest()
     
     @property
@@ -119,7 +121,7 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         # We have one output (notional of spot hedge) is a linear combination of the second
         # hidden layer node values
         # TODO investigate effect of sigmoid - are we limiting output?
-        self.add(tf.keras.layers.Dense(1, activation='sigmoid', kernel_initializer='truncated_normal'))
+        self.add(tf.keras.layers.Dense(1, activation='linear', kernel_initializer='truncated_normal'))
         
         # Inputs
         # Our 2 inputs are spot price and time, which are mostly determined during the MC
@@ -132,7 +134,7 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         
         The delta size of the position required to hedge the option.
         """
-        return -super().call(x) ** 2
+        return -self.call(x) ** 2
     
     @tf.function
     def compute_pnl(self, init_spot):
@@ -238,7 +240,8 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         n_steps_per_epoch = 100
         n_epochs = int(self.n_batches / n_steps_per_epoch)
         
-        log.info('Training on %d paths over %d batches in %d epochs', n_paths, self.n_batches, n_epochs)
+        if verbose != 0:
+            log.info('Training on %d paths over %d batches in %d epochs', n_paths, self.n_batches, n_epochs)
         
         if not isinstance(callbacks, CallbackList):
             callbacks = list(callbacks or [])
@@ -288,8 +291,9 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
             if self.stop_training:
                 break
         
-        duration = get_duration_desc(t0)
-        log.info('Total training time: %s', duration)
+        if verbose != 0:
+            duration = get_duration_desc(t0)
+            log.info('Total training time: %s', duration)
         
         callbacks.on_train_end()
         return self.history
@@ -297,13 +301,18 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
     def test(self, *, verbose=0):
         """Test model performance by comparing with analytically computed Black-Scholes hedges."""
         
-        _, bs_es, nn_es = estimate_expected_shortfalls(self, verbose=verbose)
+        uh_pnls, bs_pnls, nn_pnls = simulate(self, verbose=verbose)
+        _, bs_es, nn_es = estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, self.pctile, verbose=verbose)
         
         return nn_es - bs_es
     
     def restore(self):
         """Restore model weights from most recent checkpoint."""
-        self.load_weights(self.checkpoint_prefix)
+        try:
+            self.load_weights(self.checkpoint_prefix)
+        except ValueError:
+            # No checkpoints to restore from
+            pass
 
 
 def simulate(model, *, verbose=1, write_to_tensorboard=False):
@@ -386,17 +395,15 @@ def simulate(model, *, verbose=1, write_to_tensorboard=False):
     return uh_pnls, bs_pnls, nn_pnls
 
 
-def estimate_expected_shortfalls(model, *, verbose=1):
+def estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, pctile, *, verbose=1):
     """Estimate the unhedged, analytical, and model expected shortfalls via simulation.
     
     These estimates are also estimates of the fair price of the instrument.
     """
     
-    uh_pnls, bs_pnls, nn_pnls = simulate(model, verbose=verbose)
-    
-    uh_es = calc_expected_shortfall(uh_pnls, model.pctile)
-    bs_es = calc_expected_shortfall(bs_pnls, model.pctile)
-    nn_es = calc_expected_shortfall(nn_pnls, model.pctile)
+    uh_es = calc_expected_shortfall(uh_pnls, pctile)
+    bs_es = calc_expected_shortfall(bs_pnls, pctile)
+    nn_es = calc_expected_shortfall(nn_pnls, pctile)
     
     if verbose != 0:
         log.info('Unhedged ES      = % .5f (mean % .5f, std % .5f)', uh_es, np.mean(uh_pnls), np.std(uh_pnls))

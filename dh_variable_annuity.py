@@ -40,7 +40,7 @@ import seaborn as sns
 import tensorflow as tf
 
 
-from models.variable_annuity.model import VariableAnnuity, simulate, set_seed
+from models.variable_annuity.model import VariableAnnuity, simulate, set_seed, estimate_expected_shortfalls
 from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 
 log = logging.getLogger(__name__)
@@ -97,12 +97,13 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
     if show_pnl_plot:
         log.info('Testing on %d paths', model.n_test_paths)
         pnls = simulate(model)
+        estimate_expected_shortfalls(*pnls, pctile=model.pctile)
         plot_pnls(pnls, types=(ResultTypes.UNHEDGED, ResultTypes.BLACK_SCHOLES, ResultTypes.DEEP_HEDGING))
 
 
 if __name__ == '__main__':
     set_seed(2) # TODO can we stick this fn in utils/examples in models?
-    run_once(learning_rate=5e-3, n_batches=10_000, mu=0.0, vol=0.2, n_test_paths=100_000, S0=1.)
+    run_once(learning_rate=5e-3, n_batches=2_000, mu=0.08, vol=0.2, n_test_paths=100_000, S0=1.)
     # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
     # search_vol_vs_mu()
     # plot_heatmap(

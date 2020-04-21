@@ -5,23 +5,17 @@ Copyright: |
     Proprietary and confidential.
 Product: Standard
 Authors: Mark Higgins, Ben Pryke
-Description: |
-    Variable Annuity model.
+Description: Variable Annuity model.
 """
 
 from hashlib import md5
 import logging
-import os
 import time
 
-import matplotlib.pyplot as plt
 import numpy as np
-import scipy
-import seaborn as sns
 import tensorflow as tf
-from tensorflow.python.keras.callbacks import CallbackList # pylint: disable=no-name-in-module, import-error
-from tensorflow.python.keras.callbacks import configure_callbacks # pylint: disable=no-name-in-module, import-error
 
+from models.base import Model, HyperparamsBase
 import models.variable_annuity.analytics as analytics
 from utils import calc_expected_shortfall, get_duration_desc
 
@@ -30,24 +24,11 @@ log.setLevel(logging.INFO)
 writer = tf.summary.create_file_writer('logs/')
 
 
-def set_seed(seed=1):
-    """Seed the RNGs so we get consistent results from run to run"""
-    # TODO can this live in utils, or does it need to sit at the module level?
-    import random
-    
-    log.info('Using seed %d', seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.random.set_seed(seed)
-
-
-class Hyperparams:
-    root_checkpoint_dir = './checkpoints/'
-    
+class Hyperparams(HyperparamsBase):
     n_layers = 2
     n_hidden = 50 # Number of nodes per hidden layer
-    learning_rate = 5e-3 # Adam optimizer initial learning rate
     
+    learning_rate = 5e-3 # Adam optimizer initial learning rate
     batch_size = 100 # Number of MC paths to include in one step of the neural network training
     n_batches = 10_000
     n_test_paths = 100_000 # Number of MC paths
@@ -63,17 +44,9 @@ class Hyperparams:
     lam = 0.01 # (constant) probability of death per year
     fee = analytics.calc_fair_fee(texp, gmdb_frac, S0, vol, lam) # Annual fee percentage
     
-    dt = 1 / 12
-    n_steps = int(texp / dt) # number of time steps
-    pctile = 70 # percentile for expected shortfall
-    
-    def __init__(self, **kwargs):
-        # Set hyperparameters
-        for k, v in kwargs.items():
-            if hasattr(self, k):
-                setattr(self, k, v)
-            else:
-                raise ValueError('Invalid hyperparameter "%s"', k)
+    dt = 1 / 12 # Timesteps per year
+    n_steps = int(texp / dt) # Number of time steps
+    pctile = 70 # Percentile for expected shortfall
     
     def __setattr__(self, name, value):
         """Ensure the fair fee is kept up to date"""
@@ -91,18 +64,9 @@ class Hyperparams:
             self.S0, self.mu, self.vol, self.texp, self.principal, self.lam,
             self.dt, self.pctile,
         ))).encode('utf-8')).hexdigest()
-    
-    @property
-    def checkpoint_prefix(self):
-        """Filepath prefix to be used when saving/loading checkpoints.
-        
-        Includes everything except for the file extension.
-        """
-        
-        return os.path.join(self.checkpoint_directory, 'checkpoint')
 
 
-class VariableAnnuity(tf.keras.Sequential, Hyperparams):
+class VariableAnnuity(Model, Hyperparams):
     def __init__(self, **kwargs):
         """Define our NN structure; we use the same nodes in each timestep.
         
@@ -111,16 +75,14 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         """
         
         Hyperparams.__init__(self, **kwargs)
-        tf.keras.Sequential.__init__(self)
+        Model.__init__(self)
         
         # Hidden layers
         for _ in range(self.n_layers):
             self.add(tf.keras.layers.Dense(self.n_hidden, activation='relu', kernel_initializer='truncated_normal'))
         
         # Output
-        # We have one output (notional of spot hedge) is a linear combination of the second
-        # hidden layer node values
-        # TODO investigate effect of sigmoid - are we limiting output?
+        # We have one output (notional of spot hedge)
         self.add(tf.keras.layers.Dense(1, activation='linear', kernel_initializer='truncated_normal'))
         
         # Inputs
@@ -130,7 +92,7 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
     
     @tf.function
     def compute_hedge_delta(self, x):
-        """Returns the output of the neural network at any point in time
+        """Returns the output of the neural network at any point in time.
         
         The delta size of the position required to hedge the option.
         """
@@ -232,72 +194,6 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         r = tf.random.normal((1,), 0, 2. * self.vol * self.texp ** 0.5)[0]
         return self.S0 * tf.exp(-self.vol * self.vol * self.texp / 2. + r)
     
-    def train(self, optimizer=None, callbacks=None, *, verbose=1):
-        """We'll train the network by running an MC simulation, batching up the paths into groups of batch_size paths"""
-        
-        # Note that these aren't real epochs, but are used for monitoring val_loss (which is also different from loss...)
-        n_paths = self.batch_size * self.n_batches
-        n_steps_per_epoch = 100
-        n_epochs = int(self.n_batches / n_steps_per_epoch)
-        
-        if verbose != 0:
-            log.info('Training on %d paths over %d batches in %d epochs', n_paths, self.n_batches, n_epochs)
-        
-        if not isinstance(callbacks, CallbackList):
-            callbacks = list(callbacks or [])
-            callbacks = configure_callbacks(
-                callbacks,
-                self,
-                do_validation=True,
-                batch_size=self.batch_size,
-                epochs=n_epochs,
-                steps_per_epoch=n_steps_per_epoch,
-                verbose=verbose,
-            )
-        
-        # Use the Adam optimizer, which is gradient descent which also evolves
-        # the learning rate appropriately (the learning rate passed in is the initial`
-        # learning rate)
-        if optimizer is None:
-            optimizer = tf.keras.optimizers.Adam(self.learning_rate)
-        
-        # Remember the start time - we'll log out the total time for training later
-        callbacks.on_train_begin()
-        t0 = time.time()
-        
-        # Loop through the `batch_size`-sized subsets of the total paths and train on each
-        for epoch in range(n_epochs):
-            callbacks.on_epoch_begin(epoch)
-            
-            for step in range(n_steps_per_epoch):
-                callbacks.on_train_batch_begin(step)
-                
-                # Get a random initial spot so that the training sees a proper range even at t=0.
-                # We use the same initial spot price across the batch so that all MC paths are sampled
-                # from the same distribution, which is a requirement for our expected shortfall calculation.
-                init_spot = self.generate_random_init_spot()
-                compute_loss = lambda: self.compute_loss(init_spot)
-                
-                # Now we've got the inputs set up for the training - run the training step
-                # TODO should we use a GradientTape and then call compute_loss and apply_gradients?
-                optimizer.minimize(compute_loss, self.trainable_variables)
-                
-                logs = {'batch': step, 'size': self.batch_size, 'loss': compute_loss().numpy()}
-                callbacks.on_train_batch_end(step, logs)
-            
-            logs.update(val_loss=self.test())
-            callbacks.on_epoch_end(epoch, logs)
-            
-            if self.stop_training:
-                break
-        
-        if verbose != 0:
-            duration = get_duration_desc(t0)
-            log.info('Total training time: %s', duration)
-        
-        callbacks.on_train_end()
-        return self.history
-    
     def test(self, *, verbose=0):
         """Test model performance by comparing with analytically computed Black-Scholes hedges."""
         
@@ -305,18 +201,25 @@ class VariableAnnuity(tf.keras.Sequential, Hyperparams):
         _, bs_es, nn_es = estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, self.pctile, verbose=verbose)
         
         return nn_es - bs_es
-    
-    def restore(self):
-        """Restore model weights from most recent checkpoint."""
-        try:
-            self.load_weights(self.checkpoint_prefix)
-        except ValueError:
-            # No checkpoints to restore from
-            pass
 
 
 def simulate(model, *, verbose=1, write_to_tensorboard=False):
-    """Simulate the trading strategy and return the PNLs."""
+    """Simulate the trading strategy and return the PNLs.
+    
+    Parameters
+    ----------
+    model : :obj:`Model`
+        Trained model.
+    verbose : int
+        Verbosity, use 0 to turn off all logging.
+    write_to_tensorboard : bool
+        Whether to write to tensorboard or not.
+    
+    Returns
+    -------
+    tuple of :obj:`numpy.array`
+        (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
+    """
     
     t0 = time.time()
     n_paths = model.n_test_paths

@@ -6,7 +6,7 @@ Copyright: |
 Product: Standard
 Authors: Mark Higgins, Ben Pryke
 Description: |
-    Black-Scholes helper functions for deep hedging.
+    Black-Scholes analytical solutions for european options.
     
     See https://en.wikipedia.org/wiki/Black–Scholes_model
 """
@@ -15,7 +15,7 @@ import numpy as np
 from scipy.stats import norm
 
 
-def opt_price(is_call, spot, strike, texp, vol, rd, rf):
+def calc_opt_price(is_call, spot, strike, texp, vol, rd, rf):
     """Calculates option price
     
     Parameters
@@ -57,7 +57,7 @@ def opt_price(is_call, spot, strike, texp, vol, rd, rf):
         return strike * np.exp(-rd * texp) * norm.cdf(-d2) - spot * np.exp(-rf * texp) * norm.cdf(-d1)
 
 
-def opt_delta(is_call, spot, strike, texp, vol, rd, rf):
+def calc_opt_delta(is_call, spot, strike, texp, vol, rd, rf):
     """Calculates option delta
     
     Delta is the partial derivative of option price with respect to the spot price of the underlying

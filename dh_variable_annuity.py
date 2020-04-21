@@ -26,12 +26,11 @@ Description: |
     should be.
 """
 
-import logging
-import os
-import time
+from utils import disable_gpu
+disable_gpu() # Call first
 
-# TODO Move this into models/utils too
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # Disable GPU
+import logging
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,12 +38,19 @@ import scipy
 import seaborn as sns
 import tensorflow as tf
 
-
-from models.variable_annuity.model import VariableAnnuity, simulate, set_seed, estimate_expected_shortfalls
+from models.utils import set_seed
+import models.variable_annuity.analytics as analytics
+from models.variable_annuity.model import VariableAnnuity, simulate, estimate_expected_shortfalls
 from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+
+def get_callbacks(model):
+    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='max', restore_best_weights=True)
+    model_checkpoint = tf.keras.callbacks.ModelCheckpoint(model.checkpoint_prefix, monitor='val_loss', save_best_only=True, mode='max')
+    return [early_stopping, model_checkpoint]
 
 
 def search_vol_vs_mu():
@@ -65,8 +71,8 @@ def search_vol_vs_mu():
 
 
 def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_plot=True, **hparams):
-    # TODO move to a utils module in models and pass model as param
-    """
+    """Trains and tests a model, and displays some plots.
+    
     Parameters
     ----------
     do_train : bool
@@ -82,9 +88,7 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
     model = VariableAnnuity(**hparams)
     
     if do_train:
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, mode='max', restore_best_weights=True)
-        model_checkpoint = tf.keras.callbacks.ModelCheckpoint(model.checkpoint_prefix, monitor='val_loss', save_best_only=True, mode='max')
-        history = model.train(callbacks=[early_stopping, model_checkpoint])
+        history = model.train(callbacks=get_callbacks(model))
         
         if show_loss_plot:
             plot_loss(history.history['val_loss'])
@@ -92,7 +96,18 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
         model.restore()
     
     if show_delta_plot:
-        plot_deltas(model)
+        def compute_nn_delta(model, t, spot):
+            nn_input = np.transpose(np.array([spot, [t] * len(spot)], dtype=np.float32))
+            delta = model.compute_hedge_delta(nn_input)[:, 0].numpy()
+            delta = np.minimum(delta, 0) # pylint: disable=assignment-from-no-return
+            delta *= (1 - np.exp(-model.lam * (model.texp - t))) * model.principal
+            return delta
+        
+        def compute_bs_delta(model, t, spot):
+            account = model.principal * spot / model.S0 * np.exp(-model.fee * t)
+            return analytics.compute_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, spot)
+        
+        plot_deltas(model, compute_nn_delta, compute_bs_delta)
     
     if show_pnl_plot:
         log.info('Testing on %d paths', model.n_test_paths)
@@ -102,7 +117,7 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
 
 if __name__ == '__main__':
-    set_seed(2) # TODO can we stick this fn in utils/examples in models?
+    set_seed(2)
     run_once(learning_rate=5e-3, n_batches=2_000, mu=0.08, vol=0.2, n_test_paths=100_000, S0=1.)
     # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
     # search_vol_vs_mu()

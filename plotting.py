@@ -5,8 +5,7 @@ Copyright: |
     Proprietary and confidential.
 Product: Standard
 Authors: Mark Higgins, Ben Pryke
-Description: |
-    Plotting for the Variable Annuity model.
+Description: Plotting library for models.
 """
 
 from enum import Enum
@@ -20,8 +19,6 @@ import scipy
 import seaborn as sns
 
 from utils import get_duration_desc
-import models.variable_annuity.analytics as analytics # TODO remove dependency
-
 
 sns.set(style='darkgrid', palette='deep')
 plt.rcParams['figure.figsize'] = (8, 6)
@@ -102,7 +99,7 @@ def plot_loss(losses, *, smoothing_windows=(5, 25), min_points=10):
     plt.show()
 
 
-def plot_deltas(model, *, verbose=1):
+def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
     """Plot out delta vs spot for a range of calendar times
     
     Calculated against the known closed-form BS delta.
@@ -116,27 +113,16 @@ def plot_deltas(model, *, verbose=1):
     n_spots = 1000
     
     for t, ax in zip(ts, axes):
-        # Compute neural network delta
         test_spot = np.linspace(model.S0 / spot_fact, model.S0 * spot_fact, n_spots).astype(np.float32)
-        test_input = np.transpose(np.array([test_spot, [t] * n_spots], dtype=np.float32))
-        
-        # Compute neural network delta
-        test_delta = model.compute_hedge_delta(test_input)[:, 0].numpy()
-        test_delta = np.minimum(test_delta, 0) # pylint: disable=assignment-from-no-return
-        test_delta *= (1 - np.exp(-model.lam * (model.texp - t))) * model.principal
+        test_delta = compute_nn_delta(model, t, test_spot)
+        est_delta = compute_bs_delta(model, t, test_spot)
         
         if verbose != 0:
             log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
         
-        # Compute Black Scholes delta
-        # The hedge will have the opposite sign as the option we are hedging,
-        # ie the hedge of a long call is a short call, so we flip psi.
-        account = model.principal * test_spot / model.S0 * np.exp(-model.fee * t)
-        est_deltas = analytics.compute_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, test_spot)
-        
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))
-        bs_plot, = ax.plot(test_spot, est_deltas, color=ResultTypes.BLACK_SCHOLES.colour)
+        bs_plot, = ax.plot(test_spot, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
         nn_plot, = ax.plot(test_spot, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
     
     ax.legend([bs_plot, nn_plot], [ResultTypes.BLACK_SCHOLES.label, ResultTypes.DEEP_HEDGING.label])
@@ -171,7 +157,7 @@ def plot_pnls(pnls, types, *, trim_tails=0):
     plt.show()
 
 
-def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, **kwargs):
+def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, get_callbacks=None, **kwargs):
     """Run the model"""
     
     t0 = time.time()
@@ -186,11 +172,12 @@ def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, **
             
             for _ in range(repeats):
                 mdl = model(**hparams)
-                mdl.train() # TODO add callbacks
+                callbacks = get_callbacks(mdl) if get_callbacks is not None else None
+                mdl.train(callbacks=callbacks)
                 errors[i, j] += mdl.test()
             
             errors[i, j] /= repeats
-            log.info('Error for (y=%f, x=%f): %.5f', y, x, errors[i, j])
+            log.info('Test error for (y=%f, x=%f): %.5f', y, x, errors[i, j])
     
     log.info('Heatmap:')
     log.info(np.array2string(errors, separator=','))

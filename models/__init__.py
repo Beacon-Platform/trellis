@@ -5,8 +5,8 @@ Copyright: |
     Proprietary and confidential.
 Product: Standard
 Authors: Mark Higgins, Ben Pryke
-Description: |
-    Neural network models.
+Description: Deep hedging models.
 """
 
+from models.european_option.model import EuropeanOption
 from models.variable_annuity.model import VariableAnnuity

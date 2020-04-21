@@ -10,11 +10,22 @@ Description: Utilities for the deep hedging scripts.
 
 import logging
 import time
+import os
+import sys
 
 import numpy as np
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 log = logging.getLogger(__name__)
+
+
+def disable_gpu():
+    """Disables GPU in TensorFlow. Must be called before importing TensorFlow"""
+    
+    if 'tensorflow' in sys.modules:
+        raise RuntimeError('disable_gpu imported after tensorflow')
+        
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 
 def calc_expected_shortfall(pnls, pctile):

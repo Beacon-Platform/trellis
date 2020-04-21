@@ -5,8 +5,7 @@ Copyright: |
     Proprietary and confidential.
 Product: Standard
 Authors: Mark Higgins, Ben Pryke
-Description: |
-    Black-Scholes-based analytical Variable Annuity calculations.
+Description: Black-Scholes-based analytical Variable Annuity calculations.
 """
 
 import numpy as np
@@ -21,7 +20,7 @@ def calc_fair_fee(texp, gmdb, S0, vol, lam):
     def port_value(est_fee):
         def integ(t):
             fwd = S0 * np.exp(-est_fee * t)
-            opt = option_analytics.opt_price(False, fwd, gmdb, t, vol, 0, 0)
+            opt = option_analytics.calc_opt_price(False, fwd, gmdb, t, vol, 0, 0)
 
             return opt * np.exp(-lam * t) * lam
 

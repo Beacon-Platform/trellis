@@ -21,7 +21,6 @@ from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
-writer = tf.summary.create_file_writer('logs/')
 
 
 class Hyperparams(HyperparamsBase):
@@ -222,8 +221,11 @@ def simulate(model, *, verbose=1, write_to_tensorboard=False):
     """
     
     t0 = time.time()
-    n_paths = model.n_test_paths
     
+    if write_to_tensorboard:
+        writer = tf.summary.create_file_writer('logs/')
+    
+    n_paths = model.n_test_paths
     log_spot = np.zeros(n_paths, dtype=np.float32)
     uh_pnls = np.zeros(n_paths, dtype=np.float32)
     nn_pnls = np.zeros(n_paths, dtype=np.float32)

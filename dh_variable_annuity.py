@@ -118,7 +118,7 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
 if __name__ == '__main__':
     set_seed(2)
-    run_once(learning_rate=5e-3, n_batches=2_000, mu=0.08, vol=0.2, n_test_paths=100_000, S0=1.)
+    run_once(learning_rate=5e-3, n_batches=10_000, mu=0.08, vol=0.2, n_test_paths=100_000, S0=1.)
     # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
     # search_vol_vs_mu()
     # plot_heatmap(

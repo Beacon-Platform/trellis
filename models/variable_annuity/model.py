@@ -26,6 +26,8 @@ log.setLevel(logging.INFO)
 class Hyperparams(HyperparamsBase):
     n_layers = 2
     n_hidden = 50 # Number of nodes per hidden layer
+    w_std = 0.05 # Initialisation std of the weights
+    b_std = 0.05 # Initialisation std of the biases
     
     learning_rate = 5e-3 # Adam optimizer initial learning rate
     batch_size = 100 # Number of MC paths to include in one step of the neural network training
@@ -59,9 +61,9 @@ class Hyperparams(HyperparamsBase):
     def checkpoint_directory(self):
         """Directory in which to save checkpoint files."""
         return self.root_checkpoint_dir + 'model_' + md5(str(hash((
-            self.n_layers, self.n_hidden, self.learning_rate, self.batch_size,
-            self.S0, self.mu, self.vol, self.texp, self.principal, self.lam,
-            self.dt, self.pctile,
+            self.n_layers, self.n_hidden, self.w_std, self.b_std, self.learning_rate,
+            self.batch_size, self.S0, self.mu, self.vol, self.texp, self.principal,
+            self.lam, self.dt, self.pctile,
         ))).encode('utf-8')).hexdigest()
 
 
@@ -78,11 +80,25 @@ class VariableAnnuity(Model, Hyperparams):
         
         # Hidden layers
         for _ in range(self.n_layers):
-            self.add(tf.keras.layers.Dense(self.n_hidden, activation='relu', kernel_initializer='truncated_normal'))
+            self.add(
+                tf.keras.layers.Dense(
+                    units=self.n_hidden,
+                    activation='relu',
+                    kernel_initializer=tf.initializers.TruncatedNormal(stddev=self.w_std),
+                    bias_initializer=tf.initializers.TruncatedNormal(stddev=self.b_std),
+                )
+            )
         
         # Output
         # We have one output (notional of spot hedge)
-        self.add(tf.keras.layers.Dense(1, activation='linear', kernel_initializer='truncated_normal'))
+        self.add(
+            tf.keras.layers.Dense(
+                units=1,
+                activation='linear',
+                kernel_initializer=tf.initializers.TruncatedNormal(stddev=self.w_std),
+                bias_initializer=tf.initializers.TruncatedNormal(stddev=self.b_std),
+            )
+        )
         
         # Inputs
         # Our 2 inputs are spot price and time, which are mostly determined during the MC

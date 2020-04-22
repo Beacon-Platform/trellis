@@ -64,9 +64,9 @@ class Hyperparams(HyperparamsBase):
     def checkpoint_directory(self):
         """Directory in which to save checkpoint files."""
         return self.root_checkpoint_dir + 'model_' + md5(str(hash((
-            self.n_layers, self.n_hidden, self.learning_rate, self.batch_size,
-            self.S0, self.mu, self.vol, self.texp, self.K, self.is_call, self.is_buy,
-            self.dt, self.pctile,
+            self.n_layers, self.n_hidden, self.w_std, self.b_std, self.learning_rate,
+            self.batch_size, self.S0, self.mu, self.vol, self.texp, self.K, self.is_call,
+            self.is_buy, self.dt, self.pctile,
         ))).encode('utf-8')).hexdigest()
 
 

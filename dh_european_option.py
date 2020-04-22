@@ -1,12 +1,8 @@
-"""
-Copyright: |
-    Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
-    Unauthorized copying of this file, via any medium, is strictly prohibited.
-    Proprietary and confidential.
-Product: Standard
-Authors: Mark Higgins, Ben Pryke
-Description: Deep hedging example implementation for pricing a vanilla option under BS.
-"""
+# Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
+# License: MIT
+# Authors: Benjamin Pryke, Mark Higgins
+
+"""Deep hedging example entry-point for pricing a vanilla option under BS."""
 
 from utils import disable_gpu
 disable_gpu() # Call first

@@ -1,30 +1,8 @@
-"""
-Copyright: |
-    Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
-    Unauthorized copying of this file, via any medium, is strictly prohibited.
-    Proprietary and confidential.
-Product: Standard
-Authors: Mark Higgins, Ben Pryke
-Summary: Deep hedging example implementation for pricing a vanilla option under BS
-Description: |
-    Try out the deep hedging example from paper https://arxiv.org/abs/1802.03042.
-    
-    That paper lays out a general scheme for both pricing a derivative portfolio and
-    getting the fair upfront premium. It then applies it to an example of pricing a 
-    vanilla option under the Heston model.
-    
-    This example applies to a simpler case: pricing a vanilla option under the Black-Scholes
-    model. In this case there is just one hedge instrument: the asset itself (for a delta
-    hedge). We also leave off transaction costs, so this should reproduce standard BS
-    pricing in the limit of continuous hedging.
-    
-    Under these standard risk neutral assumptions, the thing that minimises expected
-    shortfall is continuous hedging using the Black-Scholes delta. This example asks the
-    question: in the risk neutral limit, can a neural network independently learn to
-    approximate the Black-Scholes delta when trained to minimise expected shortfall?
-    The example is useful because it proves out the case in which we know what the answer
-    should be.
-"""
+# Copyright (C) 2020 Beacon Platform Inc. - All Rights Reserved.
+# License: MIT
+# Authors: Benjamin Pryke, Mark Higgins
+
+"""Deep hedging example entry-point for pricing a variable annuity under BS."""
 
 from utils import disable_gpu
 disable_gpu() # Call first

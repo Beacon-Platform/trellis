@@ -4,7 +4,6 @@
 
 """Variable Annuity model."""
 
-from hashlib import md5
 import logging
 import time
 
@@ -56,13 +55,13 @@ class Hyperparams(HyperparamsBase):
             self.fee = analytics.calc_fair_fee(self.texp, self.gmdb_frac, self.S0, self.vol, self.lam)
     
     @property
-    def checkpoint_directory(self):
-        """Directory in which to save checkpoint files."""
-        return self.root_checkpoint_dir + 'model_' + md5(str(hash((
+    def critical_fields(self):
+        """Tuple of parameters that uniquely define the model."""
+        return (
             self.n_layers, self.n_hidden, self.w_std, self.b_std, self.learning_rate,
             self.batch_size, self.S0, self.mu, self.vol, self.texp, self.principal,
             self.lam, self.dt, self.pctile,
-        ))).encode('utf-8')).hexdigest()
+        )
 
 
 class VariableAnnuity(Model, Hyperparams):

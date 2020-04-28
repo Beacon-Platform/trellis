@@ -98,41 +98,5 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
 if __name__ == '__main__':
     set_seed(2)
-    run_once(n_epochs=100, learning_rate=5e-3, mu=0.08, vol=0.2)
-    # run_once(learning_rate=1e-3, n_batches=5000, mu=0.0, vol=0.2, n_test_paths=10_000, n_layers=2, n_hidden=25)
+    run_once(n_epochs=2, learning_rate=5e-3, mu=0.08, vol=0.2)
     # search_vol_vs_mu()
-    # plot_heatmap(
-    #     model=VariableAnnuity,
-    #     title='Deep Hedging error vs Black-Scholes',
-    #     xparam='learning_rate',
-    #     xlabel='Learning rate',
-    #     xvals=[1e-1, 1e-2, 1e-3, 1e-4, 1e-5],
-    #     yparam='n_batches',
-    #     ylabel='Training batches',
-    #     yvals=[100, 500, 1000, 5000, 10000],
-    # )
-
-    # plot_heatmap(
-    #     model=VariableAnnuity,
-    #     title='Deep Hedging error vs Black-Scholes',
-    #     xparam='n_layers',
-    #     xlabel='Hidden layers',
-    #     xvals=[1, 2, 3, 4, 5],
-    #     yparam='n_hidden',
-    #     ylabel='Hidden units per layer',
-    #     yvals=[5, 25, 50, 100, 200],
-    #     learning_rate=1e-2,
-    #     n_batches=5000,
-    # )
-
-    # plot_heatmap(
-    #     model=VariableAnnuity,
-    #     title='Deep Hedging error vs Black-Scholes',
-    #     xparam='beta_1',
-    #     xlabel='Adam Beta 1',
-    #     xvals=[0.6, 0.7, 0.8, 0.9, 0.99],
-    #     yparam='learning_rate',
-    #     ylabel='Learning rate',
-    #     yvals=[1e-2, 1e-3],
-    #     n_batches=5000,
-    # )

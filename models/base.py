@@ -4,6 +4,7 @@
 
 """Base classes for models."""
 
+from hashlib import md5
 import logging
 import os
 import time
@@ -22,6 +23,7 @@ ROOT_CHECKPOINT_DIR = './checkpoints/'
 
 class HyperparamsBase:
     root_checkpoint_dir = ROOT_CHECKPOINT_DIR
+    model_id = None # Unique id that, if defined, forms part of the checkpoint directory name
     
     learning_rate = 5e-3
     batch_size = 100 # Number of MC paths per batch
@@ -39,9 +41,19 @@ class HyperparamsBase:
                 raise ValueError('Invalid hyperparameter "%s"', k)
     
     @property
+    def critical_fields(self):
+        """Tuple of parameters that uniquely define the model."""
+        raise NotImplementedError()
+    
+    @property
     def checkpoint_directory(self):
         """Directory in which to save checkpoint files."""
-        raise NotImplementedError()
+        base = '{}{}_'.format(self.root_checkpoint_dir, self.__class__.__name__)
+        
+        if self.model_id is not None:
+            return base + self.model_id
+        
+        return base + md5(str(hash(self.critical_fields)).encode('utf-8')).hexdigest()
     
     @property
     def checkpoint_prefix(self):

@@ -80,8 +80,10 @@ class Model(tf.keras.Sequential):
         # Use the Adam optimizer, which is gradient descent which also evolves
         # the learning rate appropriately (the learning rate passed in is the initial`
         # learning rate)
-        if optimizer is None:
-            optimizer = tf.keras.optimizers.Adam(self.learning_rate)
+        if optimizer is not None:
+            self.optimizer = optimizer
+        elif getattr(self, 'optimizer', None) is None:
+            self.optimizer = tf.keras.optimizers.Adam(self.learning_rate)
         
         # Remember the start time - we'll log out the total time for training later
         callbacks.on_train_begin()
@@ -102,7 +104,7 @@ class Model(tf.keras.Sequential):
                 
                 # Now we've got the inputs set up for the training - run the training step
                 # TODO should we use a GradientTape and then call compute_loss and apply_gradients?
-                optimizer.minimize(compute_loss, self.trainable_variables)
+                self.optimizer.minimize(compute_loss, self.trainable_variables)
                 
                 logs = {'batch': step, 'size': self.batch_size, 'loss': compute_loss().numpy()}
                 callbacks.on_train_batch_end(step, logs)
@@ -123,7 +125,7 @@ class Model(tf.keras.Sequential):
     def restore(self):
         """Restore model weights from most recent checkpoint."""
         try:
-            self.load_weights(self.checkpoint_prefix)
+            self.load_weights(self.checkpoint_prefix).expect_partial()
         except ValueError:
             # No checkpoints to restore from
             pass

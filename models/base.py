@@ -12,7 +12,7 @@ from tensorflow.python.keras.callbacks import CallbackList # pylint: disable=no-
 from tensorflow.python.keras.callbacks import configure_callbacks # pylint: disable=no-name-in-module, import-error
 import tensorflow as tf
 
-from utils import get_duration_desc
+from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -24,9 +24,11 @@ class HyperparamsBase:
     root_checkpoint_dir = ROOT_CHECKPOINT_DIR
     
     learning_rate = 5e-3
-    batch_size = 100
-    n_batches = 10_000
-    n_test_paths = 100_000
+    batch_size = 100 # Number of MC paths per batch
+    epoch_size = 100 # Number of batches per epoch
+    n_epochs = 100 # Number of epochs to train for
+    n_val_paths = 50_000 # Number of paths to validate against
+    n_test_paths = 100_000 # Number of paths to test against
     
     def __init__(self, **kwargs):
         # Set hyperparameters
@@ -55,15 +57,17 @@ class Model(tf.keras.Sequential):
         tf.keras.Sequential.__init__(self)
     
     def train(self, optimizer=None, callbacks=None, *, verbose=1):
-        """We'll train the network by running an MC simulation, batching up the paths into groups of batch_size paths"""
+        """Train the network by running MC simulations, validating every `self.epoch_size` epochs.
         
-        # Note that these aren't real epochs, but are used for monitoring val_loss (which is also different from loss...)
-        n_paths = self.batch_size * self.n_batches
-        n_steps_per_epoch = 100
-        n_epochs = int(self.n_batches / n_steps_per_epoch)
+        Note: these epochs are not true epochs in the sense of full passes over the dataset, as
+        our dataset is infinite and we continuously generate new data. However, we need to
+        evaluate our progress as training continues, hence the introduction of `epoch_size`.
+        """
+        
+        n_paths = self.batch_size * self.epoch_size * self.n_epochs
         
         if verbose != 0:
-            log.info('Training on %d paths over %d batches in %d epochs', n_paths, self.n_batches, n_epochs)
+            log.info('Training on %d paths over %d epochs', n_paths, self.n_epochs)
         
         if not isinstance(callbacks, CallbackList):
             callbacks = list(callbacks or [])
@@ -72,13 +76,13 @@ class Model(tf.keras.Sequential):
                 self,
                 do_validation=True,
                 batch_size=self.batch_size,
-                epochs=n_epochs,
-                steps_per_epoch=n_steps_per_epoch,
+                epochs=self.n_epochs,
+                steps_per_epoch=self.epoch_size,
                 verbose=verbose,
             )
         
-        # Use the Adam optimizer, which is gradient descent which also evolves
-        # the learning rate appropriately (the learning rate passed in is the initial`
+        # Use the Adam optimizer y default, which is gradient descent which also evolves
+        # the learning rate appropriately (the learning rate passed in is the initial
         # learning rate)
         if optimizer is not None:
             self.optimizer = optimizer
@@ -89,11 +93,11 @@ class Model(tf.keras.Sequential):
         callbacks.on_train_begin()
         t0 = time.time()
         
-        # Loop through the `batch_size`-sized subsets of the total paths and train on each
-        for epoch in range(n_epochs):
+        # Loop through `batch_size` sized subsets of the total paths and train on each
+        for epoch in range(self.n_epochs):
             callbacks.on_epoch_begin(epoch)
             
-            for step in range(n_steps_per_epoch):
+            for step in range(self.epoch_size):
                 callbacks.on_train_batch_begin(step)
                 
                 # Get a random initial spot so that the training sees a proper range even at t=0.
@@ -109,7 +113,7 @@ class Model(tf.keras.Sequential):
                 logs = {'batch': step, 'size': self.batch_size, 'loss': compute_loss().numpy()}
                 callbacks.on_train_batch_end(step, logs)
             
-            logs.update(val_loss=self.test())
+            logs.update(val_loss=self.test(n_paths=self.n_val_paths))
             callbacks.on_epoch_end(epoch, logs)
             
             if self.stop_training:
@@ -125,7 +129,48 @@ class Model(tf.keras.Sequential):
     def restore(self):
         """Restore model weights from most recent checkpoint."""
         try:
-            self.load_weights(self.checkpoint_prefix).expect_partial()
+            self.load_weights(self.checkpoint_prefix)
         except ValueError:
-            # No checkpoints to restore from
+            # No checkpoint to restore from
             pass
+    
+    def test(self, n_paths, *, verbose=0):
+        """Test model performance by computing the Expected Shortfall of the PNLs from a
+        Monte Carlo simulation of the trading strategy represented by the model.
+        
+        Parameters
+        ----------
+        n_paths : int
+            Number of paths to test against.
+        verbose : int
+            Verbosity, use 0 to turn off all logging.
+        
+        Returns
+        -------
+        float
+            Expected Shortfall of the PNLs of the test MC simulation.
+        """
+        
+        _, _, nn_pnls = self.simulate(n_paths, verbose=verbose)
+        nn_es = calc_expected_shortfall(nn_pnls, self.pctile)
+        
+        return nn_es
+    
+    def simulate(self, n_paths, *, verbose=1, write_to_tensorboard=False):
+        """Simulate the trading strategy and return the PNLs.
+        
+        Parameters
+        ----------
+        n_paths : int
+            Number of paths to test against.
+        verbose : int
+            Verbosity, use 0 to turn off all logging.
+        write_to_tensorboard : bool
+            Whether to write to tensorboard or not.
+        
+        Returns
+        -------
+        tuple of :obj:`numpy.array`
+            (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
+        """
+        raise NotImplementedError()

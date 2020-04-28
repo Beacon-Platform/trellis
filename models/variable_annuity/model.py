@@ -25,10 +25,12 @@ class Hyperparams(HyperparamsBase):
     w_std = 0.05 # Initialisation std of the weights
     b_std = 0.05 # Initialisation std of the biases
     
-    learning_rate = 5e-3 # Adam optimizer initial learning rate
-    batch_size = 100 # Number of MC paths to include in one step of the neural network training
-    n_batches = 10_000
-    n_test_paths = 100_000 # Number of MC paths
+    learning_rate = 5e-3
+    batch_size = 100 # Number of MC paths per batch
+    epoch_size = 100 # Number of batches per epoch
+    n_epochs = 100 # Number of epochs to train for
+    n_val_paths = 50_000 # Number of paths to validate against
+    n_test_paths = 100_000 # Number of paths to test against
     
     S0 = 1.0 # initial spot price
     mu = 0.0 # Expected upward spot drift, in years
@@ -187,6 +189,7 @@ class VariableAnnuity(Model, Hyperparams):
         
         Note that we do *not* expect this to minimize to zero.
         """
+        # TODO move to losses module as ExpectedShortfall?
         
         pnl = self.compute_pnl(init_spot)
         n_pct = int((100 - self.pctile) / 100 * self.batch_size)
@@ -205,126 +208,98 @@ class VariableAnnuity(Model, Hyperparams):
         r = tf.random.normal((1,), 0, 2. * self.vol * self.texp ** 0.5)[0]
         return self.S0 * tf.exp(-self.vol * self.vol * self.texp / 2. + r)
     
-    def test(self, *, verbose=0):
-        """Test model performance by comparing with analytically computed Black-Scholes hedges."""
+    def simulate(self, n_paths, *, verbose=1, write_to_tensorboard=False):
+        """Simulate the trading strategy and return the PNLs.
         
-        uh_pnls, bs_pnls, nn_pnls = simulate(self, verbose=verbose)
-        _, bs_es, nn_es = estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, self.pctile, verbose=verbose)
+        Parameters
+        ----------
+        n_paths : int
+            Number of paths to test against.
+        verbose : int
+            Verbosity, use 0 to turn off all logging.
+        write_to_tensorboard : bool
+            Whether to write to tensorboard or not.
         
-        return nn_es - bs_es
-
-
-def simulate(model, *, verbose=1, write_to_tensorboard=False):
-    """Simulate the trading strategy and return the PNLs.
-    
-    Parameters
-    ----------
-    model : :obj:`Model`
-        Trained model.
-    verbose : int
-        Verbosity, use 0 to turn off all logging.
-    write_to_tensorboard : bool
-        Whether to write to tensorboard or not.
-    
-    Returns
-    -------
-    tuple of :obj:`numpy.array`
-        (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
-    """
-    
-    t0 = time.time()
-    
-    if write_to_tensorboard:
-        writer = tf.summary.create_file_writer('logs/')
-    
-    n_paths = model.n_test_paths
-    log_spot = np.zeros(n_paths, dtype=np.float32)
-    uh_pnls = np.zeros(n_paths, dtype=np.float32)
-    nn_pnls = np.zeros(n_paths, dtype=np.float32)
-    bs_pnls = np.zeros(n_paths, dtype=np.float32)
-    spot = np.zeros(n_paths, dtype=np.float32) + model.S0
-    account = np.zeros(n_paths, dtype=np.float32) + model.principal # Every path represents an infinite number of accounts
-    
-    # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
-    # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
-    # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
-    # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
-    for time_index in range(model.n_steps):
-        """Compute updates at start of interval"""
-        t = time_index * model.dt
+        Returns
+        -------
+        tuple of :obj:`numpy.array`
+            (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
+        """
         
-        # Compute deltas
-        input_time = tf.constant([t] * n_paths)
-        nn_input = tf.stack([spot, input_time], 1)
-        nn_delta = model.compute_hedge_delta(nn_input)[:, 0].numpy()
-        nn_delta = np.minimum(nn_delta, 0) # pylint: disable=assignment-from-no-return
-        nn_delta *= (1 - np.exp(-model.lam * (model.texp - t))) * model.principal
-        
-        bs_delta = analytics.compute_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, spot)
-        
-        # Compute step updates
-        account = model.principal * spot / model.S0 * np.exp(-model.fee * t)
-        fee = model.fee * model.dt * account * np.exp(-model.lam * t)
-        payout = model.lam * model.dt * np.maximum(model.gmdb - account, 0) * np.exp(-model.lam * t)
-        inc_pnl = fee - payout
-        
-        """Compute updates at end of interval"""
-        # Advance MC sim
-        rs = np.random.normal(0, model.dt ** 0.5, n_paths)
-        log_spot += (model.mu - model.vol * model.vol / 2.) * model.dt + model.vol * rs
-        new_spot = model.S0 * np.exp(log_spot)
-        spot_change = new_spot - spot
-        
-        # Update the PNL and dynamically delta hedge
-        uh_pnls += inc_pnl
-        nn_pnls += inc_pnl + nn_delta * spot_change
-        bs_pnls += inc_pnl + bs_delta * spot_change
-        
-        # Remember values for the next step
-        spot = new_spot
-        
-        if verbose != 0:
-            log.info(
-                '%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f',
-                t, nn_delta.mean(), nn_delta.std(), spot.mean(), spot.std()
-            )
+        t0 = time.time()
         
         if write_to_tensorboard:
-            with writer.as_default():
-                tf.summary.histogram('nn_delta', nn_delta, step=time_index)
-                tf.summary.histogram('bs_delta', bs_delta, step=time_index)
-                tf.summary.histogram('uh_pnls', uh_pnls, step=time_index)
-                tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
-                tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
-                tf.summary.histogram('log_spot', log_spot, step=time_index)
-                tf.summary.histogram('spot', spot, step=time_index)
-                tf.summary.histogram('fee', fee, step=time_index)
-                tf.summary.histogram('payout', payout, step=time_index)
-                tf.summary.histogram('inc_pnl', inc_pnl, step=time_index)
-    
-    if write_to_tensorboard:
-        writer.flush()
-    
-    if verbose != 0:
-        duration = get_duration_desc(t0)
-        log.info('Simulation time: %s', duration)
-    
-    return uh_pnls, bs_pnls, nn_pnls
-
-
-def estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, pctile, *, verbose=1):
-    """Estimate the unhedged, analytical, and model expected shortfalls via simulation.
-    
-    These estimates are also estimates of the fair price of the instrument.
-    """
-    
-    uh_es = calc_expected_shortfall(uh_pnls, pctile)
-    bs_es = calc_expected_shortfall(bs_pnls, pctile)
-    nn_es = calc_expected_shortfall(nn_pnls, pctile)
-    
-    if verbose != 0:
-        log.info('Unhedged ES      = % .5f (mean % .5f, std % .5f)', uh_es, np.mean(uh_pnls), np.std(uh_pnls))
-        log.info('Deep hedging ES  = % .5f (mean % .5f, std % .5f)', nn_es, np.mean(nn_pnls), np.std(nn_pnls))
-        log.info('Black-Scholes ES = % .5f (mean % .5f, std % .5f)', bs_es, np.mean(bs_pnls), np.std(bs_pnls))
-    
-    return uh_es, bs_es, nn_es
+            writer = tf.summary.create_file_writer('logs/')
+        
+        log_spot = np.zeros(n_paths, dtype=np.float32)
+        uh_pnls = np.zeros(n_paths, dtype=np.float32)
+        nn_pnls = np.zeros(n_paths, dtype=np.float32)
+        bs_pnls = np.zeros(n_paths, dtype=np.float32)
+        spot = np.zeros(n_paths, dtype=np.float32) + self.S0
+        account = np.zeros(n_paths, dtype=np.float32) + self.principal # Every path represents an infinite number of accounts
+        
+        # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
+        # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
+        # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
+        # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
+        for time_index in range(self.n_steps):
+            """Compute updates at start of interval"""
+            t = time_index * self.dt
+            
+            # Compute deltas
+            input_time = tf.constant([t] * n_paths)
+            nn_input = tf.stack([spot, input_time], 1)
+            nn_delta = self.compute_hedge_delta(nn_input)[:, 0].numpy()
+            nn_delta = np.minimum(nn_delta, 0) # pylint: disable=assignment-from-no-return
+            nn_delta *= (1 - np.exp(-self.lam * (self.texp - t))) * self.principal
+            
+            bs_delta = analytics.compute_delta(self.texp, t, self.lam, self.vol, self.fee, self.gmdb, account, spot)
+            
+            # Compute step updates
+            account = self.principal * spot / self.S0 * np.exp(-self.fee * t)
+            fee = self.fee * self.dt * account * np.exp(-self.lam * t)
+            payout = self.lam * self.dt * np.maximum(self.gmdb - account, 0) * np.exp(-self.lam * t)
+            inc_pnl = fee - payout
+            
+            """Compute updates at end of interval"""
+            # Advance MC sim
+            rs = np.random.normal(0, self.dt ** 0.5, n_paths)
+            log_spot += (self.mu - self.vol * self.vol / 2.) * self.dt + self.vol * rs
+            new_spot = self.S0 * np.exp(log_spot)
+            spot_change = new_spot - spot
+            
+            # Update the PNL and dynamically delta hedge
+            uh_pnls += inc_pnl
+            nn_pnls += inc_pnl + nn_delta * spot_change
+            bs_pnls += inc_pnl + bs_delta * spot_change
+            
+            # Remember values for the next step
+            spot = new_spot
+            
+            if verbose != 0:
+                log.info(
+                    '%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f',
+                    t, nn_delta.mean(), nn_delta.std(), spot.mean(), spot.std()
+                )
+            
+            if write_to_tensorboard:
+                with writer.as_default():
+                    tf.summary.histogram('nn_delta', nn_delta, step=time_index)
+                    tf.summary.histogram('bs_delta', bs_delta, step=time_index)
+                    tf.summary.histogram('uh_pnls', uh_pnls, step=time_index)
+                    tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
+                    tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
+                    tf.summary.histogram('log_spot', log_spot, step=time_index)
+                    tf.summary.histogram('spot', spot, step=time_index)
+                    tf.summary.histogram('fee', fee, step=time_index)
+                    tf.summary.histogram('payout', payout, step=time_index)
+                    tf.summary.histogram('inc_pnl', inc_pnl, step=time_index)
+        
+        if write_to_tensorboard:
+            writer.flush()
+        
+        if verbose != 0:
+            duration = get_duration_desc(t0)
+            log.info('Simulation time: %s', duration)
+        
+        return uh_pnls, bs_pnls, nn_pnls

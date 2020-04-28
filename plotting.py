@@ -74,6 +74,8 @@ def plot_thist(data, n_bins=30):
 
 
 def plot_loss(losses, *, smoothing_windows=(5, 25), min_points=10):
+    """Plot loss against number of epochs, maybe adding smoothed averages"""
+    
     curves = [losses]
     labels = ['Loss']
     

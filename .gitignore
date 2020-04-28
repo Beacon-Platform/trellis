@@ -1,4 +1,7 @@
 __pycache__/
+
 .vscode/
+*.code-workspace
+
 checkpoints/
 logs/

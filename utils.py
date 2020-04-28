@@ -9,6 +9,7 @@ import time
 import os
 import sys
 
+# Note: must not import `tensorflow` here as it is required that we do not by `disable_gpu`
 import numpy as np
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -27,8 +28,8 @@ def disable_gpu():
 def calc_expected_shortfall(pnls, pctile):
     """Calculate the expected shortfall across a number of paths pnls.
     
-    Note: Conventionally, expected shortfall is often reported as a positive number but here
-    we do not switch the sign.
+    Note: Conventionally, expected shortfall is often reported as a positive number, so
+    here we switch the sign.
     
     Parameters
     ----------
@@ -38,9 +39,37 @@ def calc_expected_shortfall(pnls, pctile):
     
     n_pct = int((100 - pctile) / 100 * len(pnls))
     pnls = np.sort(pnls)
-    price = pnls[:n_pct].mean()
+    price = -pnls[:n_pct].mean()
     
     return price
+
+
+def get_progressive_min(array):
+    """Returns an array representing the "lowest so far" of the given array.
+    
+    Specifically, output value at index i will equal `min(array[:i+1])`.
+    
+    Parameters
+    ----------
+    array : list of :obj:`~numbers.Number` or :obj:`numpy.array`
+        Input
+    
+    Returns
+    -------
+    list
+        Progressively "best so far" minimum values from the input array
+    """
+    
+    result = [0] * len(array)
+    best = array[0]
+    
+    for i, value in enumerate(array):
+        if value < best:
+            best = value
+        
+        result[i] = best
+    
+    return result
 
 
 def generate_paths(n_paths=100, init_spot=1.0, n_steps=100, texp=1.0, vol=0.2, mu=0.0):

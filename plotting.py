@@ -111,7 +111,8 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
     n_spots = 1000
     
     for t, ax in zip(ts, axes):
-        test_spot = np.linspace(model.S0 / spot_fact, model.S0 * spot_fact, n_spots).astype(np.float32)
+        spot_max = model.S0 * spot_fact
+        test_spot = np.linspace(0.01, spot_max, n_spots).astype(np.float32)
         test_delta = compute_nn_delta(model, t, test_spot)
         est_delta = compute_bs_delta(model, t, test_spot)
         
@@ -120,6 +121,7 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
         
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))
+        ax.set_xlim([0, spot_max])
         bs_plot, = ax.plot(test_spot, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
         nn_plot, = ax.plot(test_spot, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
     

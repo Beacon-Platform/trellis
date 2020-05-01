@@ -45,9 +45,9 @@ def calc_expected_shortfall(pnls, pctile):
 
 
 def get_progressive_min(array):
-    """Returns an array representing the "lowest so far" of the given array.
+    """Returns an array representing the closest to zero so far in the given array.
     
-    Specifically, output value at index i will equal `min(array[:i+1])`.
+    Specifically, output value at index i will equal `min(abs(array[:i+1]))`.
     
     Parameters
     ----------
@@ -61,10 +61,10 @@ def get_progressive_min(array):
     """
     
     result = [0] * len(array)
-    best = array[0]
+    best = abs(array[0])
     
     for i, value in enumerate(array):
-        if value < best:
+        if abs(value) < abs(best):
             best = value
         
         result[i] = best

@@ -12,6 +12,7 @@ import tensorflow as tf
 
 from models.base import Model, HyperparamsBase
 import models.variable_annuity.analytics as analytics
+from models.utils import depends_on
 from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
@@ -40,19 +41,16 @@ class Hyperparams(HyperparamsBase):
     gmdb_frac = 1.
     gmdb = gmdb_frac * principal # Guaranteed minimum death benefit, floored at principal investment
     lam = 0.01 # (constant) probability of death per year
-    fee = analytics.calc_fair_fee(texp, gmdb_frac, S0, vol, lam) # Annual fee percentage
     
     dt = 1 / 12 # Timesteps per year
     n_steps = int(texp / dt) # Number of time steps
     pctile = 70 # Percentile for expected shortfall
     
-    def __setattr__(self, name, value):
-        """Ensure the fair fee is kept up to date"""
-        # TODO Can we use non-trainable Variables to form a dependency tree so we don't need to update these without losing functionality?
-        self.__dict__[name] = value
-        
-        if name in ('texp', 'gmdb_frac', 'S0', 'vol', 'lam'):
-            self.fee = analytics.calc_fair_fee(self.texp, self.gmdb_frac, self.S0, self.vol, self.lam)
+    @property
+    @depends_on('texp', 'gmdb_frac', 'S0', 'vol', 'lam')
+    def fee(self):
+        """Annual fee percentage"""
+        return analytics.calc_fair_fee(self.texp, self.gmdb_frac, self.S0, self.vol, self.lam)
     
     @property
     def critical_fields(self):

@@ -12,6 +12,7 @@ import tensorflow as tf
 
 from models.base import Model, HyperparamsBase
 import models.european_option.analytics as analytics
+from models.utils import depends_on
 from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
@@ -39,23 +40,22 @@ class Hyperparams(HyperparamsBase):
     K = 1.0 # option strike price
     is_call = True # True: call option; False: put option
     is_buy = False # True: buying a call/put; False: selling a call/put
-    phi = 1 if is_call else -1 # Call or put
-    psi = 1 if is_buy else -1 # Buy or sell
     
     dt = 1 / 260 # Timesteps per year
     n_steps = int(texp / dt) # Number of time steps
     pctile = 70 # Percentile for expected shortfall
     
-    def __setattr__(self, name, value):
-        """Ensure the fair fee is kept up to date"""
-        # TODO Can we use non-trainable Variables to form a dependency tree so we don't need to update these without losing functionality?
-        self.__dict__[name] = value
-        
-        if name == 'is_call':
-            self.phi = 1 if self.is_call else -1
-        
-        if name == 'is_buy':
-            self.psi = 1 if self.is_buy else -1
+    @property
+    @depends_on('is_call')
+    def phi(self):
+        """Call or put"""
+        return 1 if self.is_call else -1
+    
+    @property
+    @depends_on('is_buy')
+    def psi(self):
+        """Buy or sell"""
+        return 1 if self.is_buy else -1
     
     @property
     def critical_fields(self):

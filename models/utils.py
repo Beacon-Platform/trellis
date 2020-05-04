@@ -32,6 +32,38 @@ def set_seed(seed=1):
     tf.random.set_seed(seed)
 
 
+def depends_on(*args):
+    """Caches a `Model` parameter based on its dependencies.
+    
+    Example
+    -------
+    >>> @property
+    >>> @depends_on('x', 'y')
+    >>> def param(self):
+    >>>     return self.x * self.y
+    
+    Parameters
+    ----------
+    args : list of str
+        List of parameters this parameter depends on.
+    """
+    
+    cache = {}
+    
+    def _wrapper(fn):
+        def _fn(self):
+            key = tuple(getattr(self, arg) for arg in args)
+            
+            if key not in cache:
+                cache[key] = fn(self)
+            
+            return cache[key]
+        
+        return _fn
+    
+    return _wrapper
+
+
 def estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, pctile, *, verbose=1):
     """Estimate the unhedged, analytical, and model expected shortfalls from a simulation.
     

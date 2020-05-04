@@ -138,14 +138,6 @@ class Model(tf.keras.Sequential):
         callbacks.on_train_end()
         return self.history
     
-    def restore(self):
-        """Restore model weights from most recent checkpoint."""
-        try:
-            self.load_weights(self.checkpoint_prefix)
-        except ValueError:
-            # No checkpoint to restore from
-            pass
-    
     def test(self, n_paths, *, verbose=0):
         """Test model performance by computing the Expected Shortfall of the PNLs from a
         Monte Carlo simulation of the trading strategy represented by the model.
@@ -186,3 +178,11 @@ class Model(tf.keras.Sequential):
             (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
         """
         raise NotImplementedError()
+    
+    def restore(self):
+        """Restore model weights from most recent checkpoint."""
+        try:
+            self.load_weights(self.checkpoint_prefix)
+        except ValueError:
+            # No checkpoint to restore from
+            pass

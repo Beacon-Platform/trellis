@@ -13,7 +13,7 @@ import numpy as np
 import tensorflow as tf
 
 import models.european_option.analytics as analytics
-from models.european_option.model import EuropeanOption
+from models import EuropeanOption
 from models.utils import set_seed, estimate_expected_shortfalls
 from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 from utils import get_progressive_min

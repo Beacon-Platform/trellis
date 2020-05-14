@@ -10,6 +10,7 @@ disable_gpu() # Call first
 import logging
 import time
 
+from bayes_opt import BayesianOptimization
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
@@ -18,7 +19,7 @@ import tensorflow as tf
 
 from models.utils import set_seed, estimate_expected_shortfalls
 import models.variable_annuity.analytics as analytics
-from models.variable_annuity.model import VariableAnnuity
+from models import VariableAnnuity
 from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
 from utils import get_progressive_min
 
@@ -34,8 +35,6 @@ def get_callbacks(model):
 
 
 def search_vol_vs_mu():
-    # mus = [0.0, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15]
-    # vols = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25]
     vols = [0.05, 0.1, 0.15, 0.2, 0.25]
     mus = [0.0, 0.05, 0.1, 0.15]
     plot_heatmap(
@@ -48,6 +47,62 @@ def search_vol_vs_mu():
         ylabel='Expected annual drift',
         yvals=mus,
     )
+
+
+def get_bayes_opt_loss_fn():
+    n_models = 0
+    
+    def evaluate_network(**kwargs):
+        nonlocal n_models
+        int_params = ('n_layers', 'n_hidden', 'batch_size', 'epoch_size', 'n_epochs', 'n_val_paths')
+        
+        for key in kwargs:
+            if key in int_params:
+                kwargs[key] = int(kwargs[key])
+        
+        model_id = 'bayesian_optimisation{}'.format(n_models)
+        model = VariableAnnuity(model_id=model_id, **kwargs)
+        model.train(callbacks=get_callbacks(model), verbose=0)
+        
+        # Note that we do not restore the model before testing in order that our test
+        # acts as a sample from the distribution of model states at termination, which
+        # is the distribution we wish to stabilise through hyperparameter optimisation.
+        loss = model.test(n_paths=model.n_test_paths)
+        
+        log.info('%s loss: % .5f', model_id, loss)
+        log.info(kwargs)
+        
+        n_models += 1
+        
+        return -loss
+    
+    return evaluate_network
+
+
+def run_bayesian_opt():
+    pbounds = {
+        'n_layers': (1, 4),
+        'n_hidden': (25, 75),  # Number of nodes per hidden layer
+        
+        'w_std': (0.01, 0.2),  # Initialisation std of the weights
+        'b_std': (0.01, 0.2),  # Initialisation std of the biases
+        'learning_rate': (0.01, 0.0001),
+        
+        'batch_size': (50, 250),  # Number of MC paths per batch
+        'epoch_size': (50, 250),  # Number of batches per epoch
+        'n_epochs': (50, 150),  # Number of epochs to train for #100 default
+        'n_val_paths': (1_000, 150_000),  # Number of paths to validate against
+    }
+    
+    optimizer = BayesianOptimization(
+        f=get_bayes_opt_loss_fn(),
+        pbounds=pbounds,
+        verbose=2,
+        random_state=1,
+    )
+    
+    optimizer.maximize(init_points=20, n_iter=20)
+    log.info(optimizer.max)
 
 
 def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_plot=True, **hparams):
@@ -98,5 +153,5 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
 if __name__ == '__main__':
     set_seed(2)
-    run_once(n_epochs=2, learning_rate=5e-3, mu=0.08, vol=0.2)
-    # search_vol_vs_mu()
+    run_once(n_epochs=20, learning_rate=5e-3, mu=0.0, vol=0.2)
+    run_bayesian_opt()

@@ -5,7 +5,8 @@
 """Deep hedging example entry-point for pricing a vanilla option under BS."""
 
 from utils import disable_gpu
-disable_gpu() # Call first
+
+disable_gpu()  # Call first
 
 import logging
 
@@ -43,29 +44,30 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
     show_pnl_plot : bool
         Run MC sim to compute PnL
     """
-    
+
     model = EuropeanOption(**hparams)
-    
+
     if do_train:
         history = model.train(callbacks=get_callbacks(model))
-        
+
         if show_loss_plot:
             plot_loss(get_progressive_min(history.history['val_loss']))
-    
+
     model.restore()
-    
+
     if show_delta_plot:
+
         def compute_nn_delta(model, t, spot):
             nn_input = np.transpose(np.array([spot, [t] * len(spot)], dtype=np.float32))
             return model.compute_hedge_delta(nn_input)[:, 0].numpy()
-        
+
         def compute_bs_delta(model, t, spot):
             # The hedge will have the opposite sign as the option we are hedging,
             # ie the hedge of a long call is a short call, so we flip psi.
             return -model.psi * analytics.calc_opt_delta(model.is_call, spot, model.K, model.texp - t, model.vol, 0, 0)
-        
+
         plot_deltas(model, compute_nn_delta, compute_bs_delta)
-    
+
     if show_pnl_plot:
         log.info('Testing on %d paths', model.n_test_paths)
         pnls = model.simulate(n_paths=model.n_test_paths)
@@ -76,7 +78,7 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 if __name__ == '__main__':
     set_seed(2)
     run_once(n_epochs=100, learning_rate=5e-3, mu=0.1, vol=0.2)
-    
+
     # plot_heatmap(
     #     model=EuropeanOption,
     #     title='Deep Hedging error vs Black-Scholes',

@@ -36,7 +36,7 @@ def calc_fair_fee(texp, gmdb, S0, vol, lam):
 
 def compute_delta(texp, start_time, lam, vol, fee, gmdb, account, spot):
     """Delta to put on against the VA portfolio"""
-    
+
     t_fwd = texp - start_time
     n_int = max(2, int(round(0.4 * t_fwd)))
     dt_int = t_fwd / n_int
@@ -49,5 +49,5 @@ def compute_delta(texp, start_time, lam, vol, fee, gmdb, account, spot):
         t_s = j * dt_int
         t_e = t_s + dt_int
         deltas += (np.exp(-lam * t_s) - np.exp(-lam * t_e)) * put_deltas * np.exp(-lam * start_time)
-    
+
     return deltas

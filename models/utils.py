@@ -25,7 +25,7 @@ def set_seed(seed=1):
     seed : int
         RNG seed
     """
-    
+
     log.info('Using seed %d', seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -47,20 +47,20 @@ def depends_on(*args):
     args : list of str
         List of parameters this parameter depends on.
     """
-    
+
     cache = {}
-    
+
     def _wrapper(fn):
         def _fn(self):
             key = tuple(getattr(self, arg) for arg in args)
-            
+
             if key not in cache:
                 cache[key] = fn(self)
-            
+
             return cache[key]
-        
+
         return _fn
-    
+
     return _wrapper
 
 
@@ -85,14 +85,14 @@ def estimate_expected_shortfalls(uh_pnls, bs_pnls, nn_pnls, pctile, *, verbose=1
     tuple of float
         (unhedged ES, analytical ES, neural network ES)
     """
-    
+
     uh_es = calc_expected_shortfall(uh_pnls, pctile)
     bs_es = calc_expected_shortfall(bs_pnls, pctile)
     nn_es = calc_expected_shortfall(nn_pnls, pctile)
-    
+
     if verbose != 0:
         log.info('Unhedged ES      = % .5f (mean % .5f, std % .5f)', uh_es, np.mean(uh_pnls), np.std(uh_pnls))
         log.info('Deep hedging ES  = % .5f (mean % .5f, std % .5f)', nn_es, np.mean(nn_pnls), np.std(nn_pnls))
         log.info('Black-Scholes ES = % .5f (mean % .5f, std % .5f)', bs_es, np.mean(bs_pnls), np.std(bs_pnls))
-    
+
     return uh_es, bs_es, nn_es

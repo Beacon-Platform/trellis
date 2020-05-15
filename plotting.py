@@ -28,7 +28,7 @@ class ResultTypes(Enum):
     For consistency between different plots of data corresponding to the same
     unerlying models.
     """
-    
+
     def __new__(cls, label, colour_index):
         palette = sns.color_palette()
         value = len(cls.__members__) + 1
@@ -37,7 +37,7 @@ class ResultTypes(Enum):
         obj.label = label
         obj.colour = palette[colour_index]
         return obj
-    
+
     UNHEDGED = ('Unhedged', 2)
     BLACK_SCHOLES = ('Black-Scholes', 1)
     DEEP_HEDGING = ('Deep Hedging', 0)
@@ -57,6 +57,7 @@ def calc_thist(data, n_bins=30):
 
 def plot_thist(data, n_bins=30):
     from mpl_toolkits.mplot3d import Axes3D
+
     n_ticks = 7
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
@@ -75,19 +76,19 @@ def plot_thist(data, n_bins=30):
 
 def plot_loss(losses, *, smoothing_windows=(5, 25), min_points=10):
     """Plot loss against number of epochs, maybe adding smoothed averages"""
-    
+
     curves = [losses]
     labels = ['Loss']
-    
+
     for window in smoothing_windows:
         if len(curves) > window * min_points:
             smoothed = np.convolve(losses, np.ones((window,)) / window, mode='valid')
             curves.append(smoothed)
             labels.append(f'Mean of {window}')
-    
+
     for curve in curves:
         plt.plot(range(1, len(losses) + 1), curve)
-    
+
     plt.title('Loss over time')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
@@ -102,29 +103,29 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
     
     Calculated against the known closed-form BS delta.
     """
-    
+
     f, axes = plt.subplots(2, 2, sharey=True, sharex=True)
     f.suptitle('Delta hedge vs spot vs time to maturity')
     axes = axes.flatten()
     spot_fact = np.exp(3 * model.vol * model.texp ** 0.5)
-    ts = [0., model.texp * 0.25, model.texp * 0.5, model.texp * 0.95]
+    ts = [0.0, model.texp * 0.25, model.texp * 0.5, model.texp * 0.95]
     n_spots = 1000
-    
+
     for t, ax in zip(ts, axes):
         spot_max = model.S0 * spot_fact
         test_spot = np.linspace(0.01, spot_max, n_spots).astype(np.float32)
         test_delta = compute_nn_delta(model, t, test_spot)
         est_delta = compute_bs_delta(model, t, test_spot)
-        
+
         if verbose != 0:
             log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
-        
+
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))
         ax.set_xlim([0, spot_max])
-        bs_plot, = ax.plot(test_spot, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
-        nn_plot, = ax.plot(test_spot, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
-    
+        (bs_plot,) = ax.plot(test_spot, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
+        (nn_plot,) = ax.plot(test_spot, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
+
     ax.legend([bs_plot, nn_plot], [ResultTypes.BLACK_SCHOLES.label, ResultTypes.DEEP_HEDGING.label])
     f.text(0.5, 0.04, 'Spot', ha='center')
     f.text(0.04, 0.5, 'Delta', ha='center', rotation='vertical')
@@ -142,13 +143,13 @@ def plot_pnls(pnls, types, *, trim_tails=0):
     trim_tails : int
         Percentile to trim from each tail when plotting
     """
-    
+
     hist_range = (np.percentile(pnls, trim_tails), np.percentile(pnls, 100 - trim_tails))
-    
+
     for pnl, rtype in zip(pnls, types):
         face_color = matplotlib.colors.to_rgba(rtype.colour, 0.7)
         plt.hist(pnl, range=hist_range, bins=200, facecolor=face_color, edgecolor=(1, 1, 1, 0.01), linewidth=0.5)
-    
+
     plt.title('Post-simulation PNL histograms')
     plt.xlabel('PNL')
     plt.ylabel('Frequency')
@@ -159,30 +160,30 @@ def plot_pnls(pnls, types, *, trim_tails=0):
 
 def compute_heatmap(model, title, xparam, xvals, yparam, yvals, *, repeats=3, get_callbacks=None, **kwargs):
     """Run the model"""
-    
+
     t0 = time.time()
     log.info('Hedging a variable annuity')
-    
+
     errors = np.zeros((len(yvals), len(xvals)))
-    
+
     for i, y in enumerate(yvals):
         for j, x in enumerate(xvals):
             log.info('Training with (y=%f, x=%f) over %d repeats', y, x, repeats)
             hparams = dict({xparam: x, yparam: y}, **kwargs)
-            
+
             for _ in range(repeats):
                 mdl = model(**hparams)
                 callbacks = get_callbacks(mdl) if get_callbacks is not None else None
                 mdl.train(callbacks=callbacks)
                 errors[i, j] += mdl.test()
-            
+
             errors[i, j] /= repeats
             log.info('Test error for (y=%f, x=%f): %.5f', y, x, errors[i, j])
-    
+
     log.info('Heatmap:')
     log.info(np.array2string(errors, separator=','))
     log.info('Total running time: %s', get_duration_desc(t0))
-    
+
     return errors
 
 
@@ -198,7 +199,7 @@ def plot_heatmap(model, title, xparam, xlabel, xvals, yparam, ylabel, yvals, *, 
 
 def plot_paths(paths):
     """Plot many paths to visualise Monte Carlo simulation over time."""
-    
+
     n_paths = len(paths) - 1
     plt.plot(paths)
     plt.title('Monte Carlo simulation of spot prices over time')
@@ -210,7 +211,7 @@ def plot_paths(paths):
 
 def plot_spot_hist(paths, time_index):
     """Plot histogram of spot prices at a given index in the simulation."""
-    
+
     plt.hist(paths[time_index, :], bins=50)
     plt.title('Histogram of spot prices at simulation step {}'.format(time_index))
     plt.xlabel('Spot')

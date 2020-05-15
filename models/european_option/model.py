@@ -21,59 +21,71 @@ log.setLevel(logging.INFO)
 
 class Hyperparams(HyperparamsBase):
     n_layers = 2
-    n_hidden = 50 # Number of nodes per hidden layer
-    w_std = 0.1 # Initialisation std of the weights
-    b_std = 0.05 # Initialisation std of the biases
-    
+    n_hidden = 50  # Number of nodes per hidden layer
+    w_std = 0.1  # Initialisation std of the weights
+    b_std = 0.05  # Initialisation std of the biases
+
     learning_rate = 5e-3
-    batch_size = 100 # Number of MC paths per batch
-    epoch_size = 100 # Number of batches per epoch
-    n_epochs = 100 # Number of epochs to train for
-    n_val_paths = 50_000 # Number of paths to validate against
-    n_test_paths = 100_000 # Number of paths to test against
-    
-    S0 = 1.0 # initial spot price
-    mu = 0.0 # Expected upward spot drift, in years
-    vol = 0.2 # Volatility
-    
-    texp = 0.25 # Fixed tenor to expiration, in years
-    K = 1.0 # option strike price
-    is_call = True # True: call option; False: put option
-    is_buy = False # True: buying a call/put; False: selling a call/put
-    
-    dt = 1 / 260 # Timesteps per year
-    n_steps = int(texp / dt) # Number of time steps
-    pctile = 70 # Percentile for expected shortfall
-    
+    batch_size = 100  # Number of MC paths per batch
+    epoch_size = 100  # Number of batches per epoch
+    n_epochs = 100  # Number of epochs to train for
+    n_val_paths = 50_000  # Number of paths to validate against
+    n_test_paths = 100_000  # Number of paths to test against
+
+    S0 = 1.0  # initial spot price
+    mu = 0.0  # Expected upward spot drift, in years
+    vol = 0.2  # Volatility
+
+    texp = 0.25  # Fixed tenor to expiration, in years
+    K = 1.0  # option strike price
+    is_call = True  # True: call option; False: put option
+    is_buy = False  # True: buying a call/put; False: selling a call/put
+
+    dt = 1 / 260  # Timesteps per year
+    n_steps = int(texp / dt)  # Number of time steps
+    pctile = 70  # Percentile for expected shortfall
+
     @property
     @depends_on('is_call')
     def phi(self):
         """Call or put"""
         return 1 if self.is_call else -1
-    
+
     @property
     @depends_on('is_buy')
     def psi(self):
         """Buy or sell"""
         return 1 if self.is_buy else -1
-    
+
     @property
     def critical_fields(self):
         """Tuple of parameters that uniquely define the model."""
         return (
-            self.n_layers, self.n_hidden, self.w_std, self.b_std, self.learning_rate,
-            self.batch_size, self.S0, self.mu, self.vol, self.texp, self.K, self.is_call,
-            self.is_buy, self.dt, self.pctile,
+            self.n_layers,
+            self.n_hidden,
+            self.w_std,
+            self.b_std,
+            self.learning_rate,
+            self.batch_size,
+            self.S0,
+            self.mu,
+            self.vol,
+            self.texp,
+            self.K,
+            self.is_call,
+            self.is_buy,
+            self.dt,
+            self.pctile,
         )
 
 
 class EuropeanOption(Model, Hyperparams):
     def __init__(self, **kwargs):
         """Define our NN structure; we use the same nodes in each timestep"""
-        
+
         Hyperparams.__init__(self, **kwargs)
         Model.__init__(self)
-        
+
         # Hidden layers
         for _ in range(self.n_layers):
             self.add(
@@ -84,7 +96,7 @@ class EuropeanOption(Model, Hyperparams):
                     bias_initializer=tf.initializers.TruncatedNormal(stddev=self.b_std),
                 )
             )
-        
+
         # Output
         # We have one output (notional of spot hedge)
         self.add(
@@ -95,12 +107,12 @@ class EuropeanOption(Model, Hyperparams):
                 bias_initializer=tf.initializers.TruncatedNormal(stddev=self.b_std),
             )
         )
-        
+
         # Inputs
         # Our 2 inputs are spot price and time, which are mostly determined during the MC
         # simulation except for the initial spot at time 0
         self.build((None, 2))
-    
+
     @tf.function
     def compute_hedge_delta(self, x):
         """Returns the output of the neural network at any point in time.
@@ -108,7 +120,7 @@ class EuropeanOption(Model, Hyperparams):
         The delta size of the position required to hedge the option.
         """
         return self.call(x)
-    
+
     @tf.function
     def compute_pnl(self, init_spot):
         """On each run of the training, we'll run a MC simulatiion to calculate the PNL distribution
@@ -136,16 +148,16 @@ class EuropeanOption(Model, Hyperparams):
         expected shortfall of the integrated PNLs for each path in a batch. Make sure
         we're short the option so that (absent hedging) there's a -ve PNL.
         """
-        
+
         pnl = tf.zeros(self.batch_size, dtype=tf.float32)
         spot = tf.zeros(self.batch_size, dtype=tf.float32) + init_spot
         log_spot = tf.zeros(self.batch_size, dtype=tf.float32)
-        
+
         # Run through the MC sim, generating path values for spots along the way
         for time_index in tf.range(self.n_steps, dtype=tf.float32):
             """Compute updates at start of interval"""
             t = time_index * self.dt
-            
+
             # Retrieve the neural network output, treating it as the delta hedge notional
             # at the start of the timestep. In the risk neutral limit, Black-Scholes is equivallent
             # to the minimising expected shortfall. Therefore, by minimising expected shortfall as
@@ -153,25 +165,25 @@ class EuropeanOption(Model, Hyperparams):
             input_time = tf.fill([self.batch_size], t)
             inputs = tf.stack([spot, input_time], 1)
             delta = self.compute_hedge_delta(inputs)[:, 0]
-            
+
             """Compute updates at end of interval"""
             rs = tf.random.normal([self.batch_size], 0, self.dt ** 0.5)
-            log_spot += (self.mu - self.vol * self.vol / 2.) * self.dt + self.vol * rs
+            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
             new_spot = init_spot * tf.math.exp(log_spot)
             spot_change = new_spot - spot
-            
+
             # Update the PNL and dynamically delta hedge
             pnl += delta * spot_change
-            
+
             # Remember values for the next step
             spot = new_spot
-        
+
         # Calculate the final payoff
         payoff = self.psi * tf.maximum(self.phi * (spot - self.K), 0)
-        pnl += payoff # Note we sell the option here
-        
+        pnl += payoff  # Note we sell the option here
+
         return pnl
-    
+
     @tf.function
     def compute_loss(self, init_spot):
         """Use expected shortfall for the appropriate percentile as the loss function.
@@ -179,24 +191,24 @@ class EuropeanOption(Model, Hyperparams):
         Note that we do *not* expect this to minimize to zero.
         """
         # TODO move to losses module as ExpectedShortfall?
-        
+
         pnl = self.compute_pnl(init_spot)
         n_pct = int((100 - self.pctile) / 100 * self.batch_size)
         pnl_past_cutoff = tf.nn.top_k(-pnl, n_pct)[0]
         return tf.reduce_mean(pnl_past_cutoff) / init_spot
-    
+
     @tf.function
     def compute_mean_pnl(self, init_spot):
         """Mean PNL for debugging purposes"""
         pnl = self.compute_pnl(init_spot)
         return tf.reduce_mean(pnl)
-    
+
     @tf.function
     def generate_random_init_spot(self):
         # TODO does this belong here?
-        r = tf.random.normal((1,), 0, 2. * self.vol * self.texp ** 0.5)[0]
-        return self.S0 * tf.exp(-self.vol * self.vol * self.texp / 2. + r)
-    
+        r = tf.random.normal((1,), 0, 2.0 * self.vol * self.texp ** 0.5)[0]
+        return self.S0 * tf.exp(-self.vol * self.vol * self.texp / 2.0 + r)
+
     def simulate(self, n_paths, *, verbose=1, write_to_tensorboard=False):
         """Simulate the trading strategy and return the PNLs.
         
@@ -214,18 +226,18 @@ class EuropeanOption(Model, Hyperparams):
         tuple of :obj:`numpy.array`
             (unhedged pnl, Black-Scholes hedged pnl, neural network hedged pnl)
         """
-        
+
         t0 = time.time()
-        
+
         if write_to_tensorboard:
             writer = tf.summary.create_file_writer('logs/')
-        
+
         log_spot = np.zeros(n_paths, dtype=np.float32)
         uh_pnls = np.zeros(n_paths, dtype=np.float32)
         nn_pnls = np.zeros(n_paths, dtype=np.float32)
         bs_pnls = np.zeros(n_paths, dtype=np.float32)
         spot = np.zeros(n_paths, dtype=np.float32) + self.S0
-        
+
         # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
         # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
         # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
@@ -233,33 +245,37 @@ class EuropeanOption(Model, Hyperparams):
         for time_index in range(self.n_steps):
             """Compute updates at start of interval"""
             t = time_index * self.dt
-            
+
             input_time = tf.constant([t] * n_paths)
             nn_input = tf.stack([spot, input_time], 1)
             nn_delta = self.compute_hedge_delta(nn_input)[:, 0].numpy()
-            
+
             bs_delta = -self.psi * analytics.calc_opt_delta(self.is_call, spot, self.K, self.texp - t, self.vol, 0, 0)
-            
+
             """Compute updates at end of interval"""
             # Advance MC sim
             rs = np.random.normal(0, self.dt ** 0.5, n_paths)
-            log_spot += (self.mu - self.vol * self.vol / 2.) * self.dt + self.vol * rs
+            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
             new_spot = self.S0 * np.exp(log_spot)
             spot_change = new_spot - spot
-            
+
             # Get the PNLs of the hedges over the interval
             nn_pnls += nn_delta * spot_change
             bs_pnls += bs_delta * spot_change
-            
+
             # Remember stuff for the next time step
             spot = new_spot
-            
+
             if verbose != 0:
                 log.info(
                     '%.4f years - delta: mean % .5f, std % .5f; spot: mean % .5f, std % .5f',
-                    t, nn_delta.mean(), nn_delta.std(), spot.mean(), spot.std()
+                    t,
+                    nn_delta.mean(),
+                    nn_delta.std(),
+                    spot.mean(),
+                    spot.std(),
                 )
-            
+
             if write_to_tensorboard:
                 with writer.as_default():
                     tf.summary.histogram('nn_delta', nn_delta, step=time_index)
@@ -268,18 +284,18 @@ class EuropeanOption(Model, Hyperparams):
                     tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
                     tf.summary.histogram('log_spot', log_spot, step=time_index)
                     tf.summary.histogram('spot', spot, step=time_index)
-        
+
         # Compute the payoff and some metrics
         payoff = self.psi * np.maximum(self.phi * (spot - self.K), 0)
         uh_pnls += payoff
         nn_pnls += payoff
         bs_pnls += payoff
-        
+
         if write_to_tensorboard:
             writer.flush()
-        
+
         if verbose != 0:
             duration = get_duration_desc(t0)
             log.info('Simulation time: %s', duration)
-        
+
         return uh_pnls, bs_pnls, nn_pnls

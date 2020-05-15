@@ -36,17 +36,17 @@ def calc_opt_price(is_call, spot, strike, texp, vol, rd, rf):
     float
         Price
     """
-    
+
     if vol <= 0 or texp <= 0 or strike <= 0:
         # Return intrinsic value
         int_val = spot * np.exp(-rf * texp) - strike * np.exp(-rd * texp)
         sign = 1 if is_call else -1
         return sign * np.maximum(int_val, 0)
-    
+
     # Otherwise calculate the standard value
     d1 = calc_d1(spot, strike, texp, vol, rd, rf)
     d2 = d1 - vol * np.sqrt(texp)
-    
+
     if is_call:
         return spot * np.exp(-rf * texp) * norm.cdf(d1) - strike * np.exp(-rd * texp) * norm.cdf(d2)
     else:
@@ -81,17 +81,17 @@ def calc_opt_delta(is_call, spot, strike, texp, vol, rd, rf):
     float
         Delta
     """
-    
+
     if vol <= 0 or texp <= 0:
         # Return intrinsic delta
         int_val = spot * np.exp(-rf * texp) - strike * np.exp(-rd * texp)
-        
+
         if not is_call:
             int_val *= -1
-        
+
         sign = 1 if is_call else -1
         return np.where(int_val < 0, 0, sign * np.exp(-rf * texp))
-    
+
     # Otherwise calculate the standard value
     if is_call:
         return np.exp(-rf * texp) * norm.cdf(calc_d1(spot, strike, texp, vol, rd, rf))
@@ -122,4 +122,4 @@ def calc_d1(spot, strike, texp, vol, rd, rf):
     float
         The value of d_1 for the given argument values
     """
-    return (np.log(spot / strike) + (rd - rf + vol * vol / 2.) * texp) / vol / np.sqrt(texp)
+    return (np.log(spot / strike) + (rd - rf + vol * vol / 2.0) * texp) / vol / np.sqrt(texp)

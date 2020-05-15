@@ -18,10 +18,10 @@ log = logging.getLogger(__name__)
 
 def disable_gpu():
     """Disables GPU in TensorFlow. Must be called before importing TensorFlow"""
-    
+
     if 'tensorflow' in sys.modules:
         raise RuntimeError('disable_gpu imported after tensorflow')
-        
+
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 
@@ -36,11 +36,11 @@ def calc_expected_shortfall(pnls, pctile):
     pnls : :obj:`numpy.array`
         Array of pnls for a number of paths.
     """
-    
+
     n_pct = int((100 - pctile) / 100 * len(pnls))
     pnls = np.sort(pnls)
     price = -pnls[:n_pct].mean()
-    
+
     return price
 
 
@@ -59,16 +59,16 @@ def get_progressive_min(array):
     list
         Progressively "best so far" minimum values from the input array
     """
-    
+
     result = [0] * len(array)
     best = abs(array[0])
-    
+
     for i, value in enumerate(array):
         if abs(value) < abs(best):
             best = value
-        
+
         result[i] = best
-    
+
     return result
 
 
@@ -94,20 +94,20 @@ def generate_paths(n_paths=100, init_spot=1.0, n_steps=100, texp=1.0, vol=0.2, m
     :obj:`numpy.array`
         Array of curves of size (`n_steps`, `n_curves`)
     """
-    
+
     log_spot = np.zeros(n_paths)
     spot = np.zeros((n_steps, n_paths))
     init_spot = 1.0
     dt = texp / n_steps
     sqrtdt = dt ** 0.5
-    
+
     for t in range(n_steps):
         rs = np.random.normal(0, sqrtdt, size=n_paths)
-        log_spot += (mu - vol * vol / 2.) * dt + vol * rs
+        log_spot += (mu - vol * vol / 2.0) * dt + vol * rs
         spot[t, :] = init_spot * np.exp(log_spot)
-    
+
     log.info('Average final spot %.2f', np.mean(spot[n_paths, :]))
-    
+
     return spot
 
 
@@ -119,7 +119,7 @@ def get_duration_desc(start):
     start : int or float
         Timestamp
     """
-    
+
     end = time.time()
     duration = round(end - start)
     minutes, seconds = divmod(duration, 60)

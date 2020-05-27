@@ -50,7 +50,7 @@ team member will apply `ready to pull` label to your change. This means we are
 working on getting your pull request submitted to the repository.
 
 If you want to contribute, start working through the codebase,
-navigate to the Github "issues" tab and start
+navigate to the Github [issues](https://github.com/Beacon-Platform/trellis/issues) tab and start
 looking through interesting issues. If you are not sure of where to start, then
 start by trying one of the smaller/easier issues here i.e.
 issues with the "good first issue" label
@@ -71,7 +71,7 @@ with the guidelines and follow the coding style.
 
 #### General guidelines and philosophy for contribution
 
-*   As this project is in its infancy, improvements around all aspects of
+*   As Trellis is in its infancy, improvements around all aspects of
     the APIs and structure as well as the addition of models, tools, tests,
     examples, and documentation are greatly appreciated.
 *   Include unit tests when you contribute new features, as they help to a)

@@ -72,45 +72,6 @@ def get_progressive_min(array):
     return result
 
 
-def generate_paths(n_paths=100, init_spot=1.0, n_steps=100, texp=1.0, vol=0.2, mu=0.0):
-    """Generates spot curves using simple geometric Brownian motion.
-    
-    Parameters
-    ----------
-    n_curves : int
-        The number of curves to generate
-    init_spot : float
-        Initial spot price
-    n_steps : int
-        Number of steps to simulate, the length of the curves
-    texp : float
-        Time to expiry, years
-    vol : float
-        Volatility
-    mu : Expected upward drift per year, 0.08 = 8% per year
-    
-    Returns
-    -------
-    :obj:`numpy.array`
-        Array of curves of size (`n_steps`, `n_curves`)
-    """
-
-    log_spot = np.zeros(n_paths)
-    spot = np.zeros((n_steps, n_paths))
-    init_spot = 1.0
-    dt = texp / n_steps
-    sqrtdt = dt ** 0.5
-
-    for t in range(n_steps):
-        rs = np.random.normal(0, sqrtdt, size=n_paths)
-        log_spot += (mu - vol * vol / 2.0) * dt + vol * rs
-        spot[t, :] = init_spot * np.exp(log_spot)
-
-    log.info('Average final spot %.2f', np.mean(spot[n_paths, :]))
-
-    return spot
-
-
 def get_duration_desc(start):
     """Returns a string {min}:{sec} describing the duration since `start`
     

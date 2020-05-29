@@ -13,6 +13,7 @@ import tensorflow as tf
 from models.base import Model, HyperparamsBase
 import models.variable_annuity.analytics as analytics
 from models.utils import depends_on
+from random_processes import gbm
 from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
@@ -148,14 +149,14 @@ class VariableAnnuity(Model, Hyperparams):
         """
 
         pnl = tf.zeros(self.batch_size, dtype=tf.float32)  # Account values are not part of insurer pnl
-        spot = tf.zeros(self.batch_size, dtype=tf.float32) + init_spot
-        log_spot = tf.zeros(self.batch_size, dtype=tf.float32)
+        spots = gbm(init_spot, self.mu, self.vol, self.dt, self.n_steps, self.batch_size)  # Defined in the real world measure
         account = tf.zeros(self.batch_size, dtype=tf.float32) + self.principal  # Every path represents an infinite number of accounts
 
         # Run through the MC sim, generating path values for spots along the way
-        for time_index in tf.range(self.n_steps, dtype=tf.float32):
-            """Compute updates at start of interval"""
-            t = time_index * self.dt
+        for time_index in tf.range(self.n_steps):
+            # 1. Compute updates at start of interval
+            t = tf.cast(time_index, dtype=tf.float32) * self.dt
+            spot = spots[time_index]
 
             # Retrieve the neural network output, treating it as the delta hedge notional
             # at the start of the timestep. In the risk neutral limit, Black-Scholes is equivallent
@@ -172,22 +173,10 @@ class VariableAnnuity(Model, Hyperparams):
             payout = self.lam * self.dt * tf.maximum(self.gmdb - account, 0) * tf.math.exp(-self.lam * t)
             inc_pnl = fee - payout
 
-            """Compute updates at end of interval"""
-            # The stochastic process is defined in the real world measure, not the risk neutral one.
-            # The process is:
-            #     dS = mu S dt + vol S dz_s
-            # where the model parameters are mu and vol. mu is the (real world) drift of the asset price S.
-            rs = tf.random.normal([self.batch_size], 0, self.dt ** 0.5)
-            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
-            new_spot = init_spot * tf.math.exp(log_spot)
-            spot_change = new_spot - spot
-
-            # Update the PNL and dynamically delta hedge
-            pnl += inc_pnl
-            pnl += delta * spot_change
-
-            # Remember values for the next step
-            spot = new_spot
+            # 2. Compute updates at end of interval
+            # Delta hedge and record the incremental pnl changes over the interval
+            spot_change = spots[time_index + 1] - spot
+            pnl += inc_pnl + delta * spot_change
 
         return pnl
 
@@ -239,11 +228,10 @@ class VariableAnnuity(Model, Hyperparams):
         if write_to_tensorboard:
             writer = tf.summary.create_file_writer('logs/')
 
-        log_spot = np.zeros(n_paths, dtype=np.float32)
+        spots = gbm(self.S0, self.mu, self.vol, self.dt, self.n_steps, n_paths).numpy()
         uh_pnls = np.zeros(n_paths, dtype=np.float32)
         nn_pnls = np.zeros(n_paths, dtype=np.float32)
         bs_pnls = np.zeros(n_paths, dtype=np.float32)
-        spot = np.zeros(n_paths, dtype=np.float32) + self.S0
         account = np.zeros(n_paths, dtype=np.float32) + self.principal  # Every path represents an infinite number of accounts
 
         # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
@@ -251,8 +239,9 @@ class VariableAnnuity(Model, Hyperparams):
         # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
         # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
         for time_index in range(self.n_steps):
-            """Compute updates at start of interval"""
+            # 1. Compute updates at start of interval
             t = time_index * self.dt
+            spot = spots[time_index]
 
             # Compute deltas
             input_time = tf.constant([t] * n_paths)
@@ -269,20 +258,12 @@ class VariableAnnuity(Model, Hyperparams):
             payout = self.lam * self.dt * np.maximum(self.gmdb - account, 0) * np.exp(-self.lam * t)
             inc_pnl = fee - payout
 
-            """Compute updates at end of interval"""
-            # Advance MC sim
-            rs = np.random.normal(0, self.dt ** 0.5, n_paths)
-            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
-            new_spot = self.S0 * np.exp(log_spot)
-            spot_change = new_spot - spot
-
-            # Update the PNL and dynamically delta hedge
+            # 2. Compute updates at end of interval
+            # Record incremental pnl changes over the interval
+            spot_change = spots[time_index + 1] - spot
             uh_pnls += inc_pnl
             nn_pnls += inc_pnl + nn_delta * spot_change
             bs_pnls += inc_pnl + bs_delta * spot_change
-
-            # Remember values for the next step
-            spot = new_spot
 
             if verbose != 0:
                 log.info(
@@ -301,7 +282,6 @@ class VariableAnnuity(Model, Hyperparams):
                     tf.summary.histogram('uh_pnls', uh_pnls, step=time_index)
                     tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
                     tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
-                    tf.summary.histogram('log_spot', log_spot, step=time_index)
                     tf.summary.histogram('spot', spot, step=time_index)
                     tf.summary.histogram('fee', fee, step=time_index)
                     tf.summary.histogram('payout', payout, step=time_index)

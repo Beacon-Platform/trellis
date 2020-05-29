@@ -13,6 +13,7 @@ import tensorflow as tf
 from models.base import Model, HyperparamsBase
 import models.european_option.analytics as analytics
 from models.utils import depends_on
+from random_processes import gbm
 from utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
@@ -150,36 +151,28 @@ class EuropeanOption(Model, Hyperparams):
         """
 
         pnl = tf.zeros(self.batch_size, dtype=tf.float32)
-        spot = tf.zeros(self.batch_size, dtype=tf.float32) + init_spot
-        log_spot = tf.zeros(self.batch_size, dtype=tf.float32)
+        spots = gbm(init_spot, self.mu, self.vol, self.dt, self.n_steps, self.batch_size)
 
         # Run through the MC sim, generating path values for spots along the way
-        for time_index in tf.range(self.n_steps, dtype=tf.float32):
-            """Compute updates at start of interval"""
-            t = time_index * self.dt
-
+        for time_index in tf.range(self.n_steps):
+            # 1. Compute updates at start of interval
             # Retrieve the neural network output, treating it as the delta hedge notional
             # at the start of the timestep. In the risk neutral limit, Black-Scholes is equivallent
             # to the minimising expected shortfall. Therefore, by minimising expected shortfall as
             # our loss function, the output of the network is trained to approximate Black-Scholes delta.
+            t = tf.cast(time_index, dtype=tf.float32) * self.dt
+            spot = spots[time_index]
             input_time = tf.fill([self.batch_size], t)
             inputs = tf.stack([spot, input_time], 1)
             delta = self.compute_hedge_delta(inputs)[:, 0]
 
-            """Compute updates at end of interval"""
-            rs = tf.random.normal([self.batch_size], 0, self.dt ** 0.5)
-            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
-            new_spot = init_spot * tf.math.exp(log_spot)
-            spot_change = new_spot - spot
-
-            # Update the PNL and dynamically delta hedge
+            # 2. Compute updates at end of interval
+            # Delta hedge and record the incremental pnl changes over the interval
+            spot_change = spots[time_index + 1] - spot
             pnl += delta * spot_change
 
-            # Remember values for the next step
-            spot = new_spot
-
         # Calculate the final payoff
-        payoff = self.psi * tf.maximum(self.phi * (spot - self.K), 0)
+        payoff = self.psi * tf.maximum(self.phi * (spots[-1] - self.K), 0)
         pnl += payoff  # Note we sell the option here
 
         return pnl
@@ -232,19 +225,19 @@ class EuropeanOption(Model, Hyperparams):
         if write_to_tensorboard:
             writer = tf.summary.create_file_writer('logs/')
 
-        log_spot = np.zeros(n_paths, dtype=np.float32)
+        spots = gbm(self.S0, self.mu, self.vol, self.dt, self.n_steps, n_paths).numpy()
         uh_pnls = np.zeros(n_paths, dtype=np.float32)
         nn_pnls = np.zeros(n_paths, dtype=np.float32)
         bs_pnls = np.zeros(n_paths, dtype=np.float32)
-        spot = np.zeros(n_paths, dtype=np.float32) + self.S0
 
         # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
         # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
         # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
         # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
         for time_index in range(self.n_steps):
-            """Compute updates at start of interval"""
+            # 1. Compute updates at start of interval
             t = time_index * self.dt
+            spot = spots[time_index]
 
             input_time = tf.constant([t] * n_paths)
             nn_input = tf.stack([spot, input_time], 1)
@@ -252,19 +245,11 @@ class EuropeanOption(Model, Hyperparams):
 
             bs_delta = -self.psi * analytics.calc_opt_delta(self.is_call, spot, self.K, self.texp - t, self.vol, 0, 0)
 
-            """Compute updates at end of interval"""
-            # Advance MC sim
-            rs = np.random.normal(0, self.dt ** 0.5, n_paths)
-            log_spot += (self.mu - self.vol * self.vol / 2.0) * self.dt + self.vol * rs
-            new_spot = self.S0 * np.exp(log_spot)
-            spot_change = new_spot - spot
-
-            # Get the PNLs of the hedges over the interval
+            # 2. Compute updates at end of interval
+            # Record incremental pnl changes over the interval
+            spot_change = spots[time_index + 1] - spot
             nn_pnls += nn_delta * spot_change
             bs_pnls += bs_delta * spot_change
-
-            # Remember stuff for the next time step
-            spot = new_spot
 
             if verbose != 0:
                 log.info(
@@ -282,11 +267,10 @@ class EuropeanOption(Model, Hyperparams):
                     tf.summary.histogram('bs_delta', bs_delta, step=time_index)
                     tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
                     tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
-                    tf.summary.histogram('log_spot', log_spot, step=time_index)
                     tf.summary.histogram('spot', spot, step=time_index)
 
         # Compute the payoff and some metrics
-        payoff = self.psi * np.maximum(self.phi * (spot - self.K), 0)
+        payoff = self.psi * np.maximum(self.phi * (spots[-1] - self.K), 0)
         uh_pnls += payoff
         nn_pnls += payoff
         bs_pnls += payoff

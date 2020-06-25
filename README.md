@@ -1,3 +1,6 @@
+[![PyPI version](https://badge.fury.io/py/beacon-trellis.svg)](https://pypi.org/project/beacon-trellis/)
+[![Python versions](https://img.shields.io/pypi/pyversions/beacon-trellis.svg)](https://pypi.org/project/beacon-trellis/)
+
 # Trellis: Deep Hedging and Deep Pricing
 
 Trellis is a deep hedging and deep pricing framework with the primary purpose of furthering research into the use of neural networks as a replacement for classical analytical methods for pricing and hedging financial instruments.

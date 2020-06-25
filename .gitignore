@@ -3,5 +3,13 @@ __pycache__/
 .vscode/
 *.code-workspace
 
+build/
+dist/
+*.egg-info/
+
 checkpoints/
 logs/
+
+checkpoint
+*.data-*
+*.index

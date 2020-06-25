@@ -4,7 +4,7 @@
 
 """Deep hedging example entry-point for pricing a variable annuity under BS."""
 
-from utils import disable_gpu
+from trellis.utils import disable_gpu
 
 disable_gpu()  # Call first
 
@@ -18,11 +18,11 @@ import scipy
 import seaborn as sns
 import tensorflow as tf
 
-from models.utils import set_seed, estimate_expected_shortfalls
-import models.variable_annuity.analytics as analytics
-from models import VariableAnnuity
-from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
-from utils import get_progressive_min
+from trellis.models.utils import set_seed, estimate_expected_shortfalls
+import trellis.models.variable_annuity.analytics as analytics
+from trellis.models import VariableAnnuity
+from trellis.plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
+from trellis.utils import get_progressive_min
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -135,7 +135,7 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
         def compute_bs_delta(model, t, spot):
             account = model.principal * spot / model.S0 * np.exp(-model.fee * t)
-            return analytics.compute_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, spot)
+            return analytics.calc_delta(model.texp, t, model.lam, model.vol, model.fee, model.gmdb, account, spot)
 
         plot_deltas(model, compute_nn_delta, compute_bs_delta)
 
@@ -149,4 +149,4 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 if __name__ == '__main__':
     set_seed(2)
     run_once(n_epochs=20, learning_rate=5e-3, mu=0.0, vol=0.2)
-    run_bayesian_opt()
+    # run_bayesian_opt()

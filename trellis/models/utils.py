@@ -10,8 +10,8 @@ import random
 import numpy as np
 import tensorflow as tf
 
-from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
-from utils import calc_expected_shortfall
+from trellis.plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
+from trellis.utils import calc_expected_shortfall
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)

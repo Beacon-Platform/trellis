@@ -2,7 +2,7 @@
 # License: MIT
 # Authors: Benjamin Pryke, Mark Higgins
 
-"""Vanilla European Option model."""
+"""Variable Annuity model."""
 
 import logging
 import time
@@ -10,11 +10,11 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from models.base import Model, HyperparamsBase
-import models.european_option.analytics as analytics
-from models.utils import depends_on
-from random_processes import gbm
-from utils import calc_expected_shortfall, get_duration_desc
+from trellis.models.base import Model, HyperparamsBase
+from trellis.models.variable_annuity import analytics
+from trellis.models.utils import depends_on
+from trellis.random_processes import gbm
+from trellis.utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -23,7 +23,7 @@ log.setLevel(logging.INFO)
 class Hyperparams(HyperparamsBase):
     n_layers = 2
     n_hidden = 50  # Number of nodes per hidden layer
-    w_std = 0.1  # Initialisation std of the weights
+    w_std = 0.05  # Initialisation std of the weights
     b_std = 0.05  # Initialisation std of the biases
 
     learning_rate = 5e-3
@@ -37,26 +37,21 @@ class Hyperparams(HyperparamsBase):
     mu = 0.0  # Expected upward spot drift, in years
     vol = 0.2  # Volatility
 
-    texp = 0.25  # Fixed tenor to expiration, in years
-    K = 1.0  # option strike price
-    is_call = True  # True: call option; False: put option
-    is_buy = False  # True: buying a call/put; False: selling a call/put
+    texp = 5.0  # Fixed tenor to expiration, in years
+    principal = 100.0  # Initial investment lump sum
+    gmdb_frac = 1.0
+    gmdb = gmdb_frac * principal  # Guaranteed minimum death benefit, floored at principal investment
+    lam = 0.01  # (constant) probability of death per year
 
-    dt = 1 / 260  # Timesteps per year
+    dt = 1 / 12  # Timesteps per year
     n_steps = int(texp / dt)  # Number of time steps
     pctile = 70  # Percentile for expected shortfall
 
     @property
-    @depends_on('is_call')
-    def phi(self):
-        """Call or put"""
-        return 1 if self.is_call else -1
-
-    @property
-    @depends_on('is_buy')
-    def psi(self):
-        """Buy or sell"""
-        return 1 if self.is_buy else -1
+    @depends_on('texp', 'gmdb_frac', 'S0', 'vol', 'lam')
+    def fee(self):
+        """Annual fee percentage"""
+        return analytics.calc_fair_fee(self.texp, self.gmdb_frac, self.S0, self.vol, self.lam)
 
     @property
     def critical_fields(self):
@@ -72,17 +67,20 @@ class Hyperparams(HyperparamsBase):
             self.mu,
             self.vol,
             self.texp,
-            self.K,
-            self.is_call,
-            self.is_buy,
+            self.principal,
+            self.lam,
             self.dt,
             self.pctile,
         )
 
 
-class EuropeanOption(Model, Hyperparams):
+class VariableAnnuity(Model, Hyperparams):
     def __init__(self, **kwargs):
-        """Define our NN structure; we use the same nodes in each timestep"""
+        """Define our NN structure; we use the same nodes in each timestep.
+        
+        Network inputs are spot and the time to expiration.
+        Network output is delta hedge notional.
+        """
 
         Hyperparams.__init__(self, **kwargs)
         Model.__init__(self)
@@ -120,7 +118,7 @@ class EuropeanOption(Model, Hyperparams):
         
         The delta size of the position required to hedge the option.
         """
-        return self.call(x)
+        return -self.call(x) ** 2
 
     @tf.function
     def compute_pnl(self, init_spot):
@@ -146,34 +144,39 @@ class EuropeanOption(Model, Hyperparams):
         
         So we build a tensorflow graph to calculate that integrated PNL for a given
         path. Then we'll define a loss function (given a set of path PNLs) equal to the
-        expected shortfall of the integrated PNLs for each path in a batch. Make sure
+        expected shortfall of the integrated PNLs nfor each path in a batch. Make sure
         we're short the option so that (absent hedging) there's a -ve PNL.
         """
 
-        pnl = tf.zeros(self.batch_size, dtype=tf.float32)
-        spots = gbm(init_spot, self.mu, self.vol, self.dt, self.n_steps, self.batch_size)
+        pnl = tf.zeros(self.batch_size, dtype=tf.float32)  # Account values are not part of insurer pnl
+        spots = gbm(init_spot, self.mu, self.vol, self.dt, self.n_steps, self.batch_size)  # Defined in the real world measure
+        account = tf.zeros(self.batch_size, dtype=tf.float32) + self.principal  # Every path represents an infinite number of accounts
 
         # Run through the MC sim, generating path values for spots along the way
         for time_index in tf.range(self.n_steps):
             # 1. Compute updates at start of interval
+            t = tf.cast(time_index, dtype=tf.float32) * self.dt
+            spot = spots[time_index]
+
             # Retrieve the neural network output, treating it as the delta hedge notional
             # at the start of the timestep. In the risk neutral limit, Black-Scholes is equivallent
             # to the minimising expected shortfall. Therefore, by minimising expected shortfall as
             # our loss function, the output of the network is trained to approximate Black-Scholes delta.
-            t = tf.cast(time_index, dtype=tf.float32) * self.dt
-            spot = spots[time_index]
             input_time = tf.fill([self.batch_size], t)
             inputs = tf.stack([spot, input_time], 1)
             delta = self.compute_hedge_delta(inputs)[:, 0]
+            delta *= tf.minimum(tf.math.exp(-0.01 * delta), 1.0)
+            delta *= (1 - tf.math.exp(-self.lam * (self.texp - t))) * self.principal
+
+            account = self.principal * spot / self.S0 * tf.math.exp(-self.fee * t)
+            fee = self.fee * self.dt * account * tf.math.exp(-self.lam * t)
+            payout = self.lam * self.dt * tf.maximum(self.gmdb - account, 0) * tf.math.exp(-self.lam * t)
+            inc_pnl = fee - payout
 
             # 2. Compute updates at end of interval
             # Delta hedge and record the incremental pnl changes over the interval
             spot_change = spots[time_index + 1] - spot
-            pnl += delta * spot_change
-
-        # Calculate the final payoff
-        payoff = self.psi * tf.maximum(self.phi * (spots[-1] - self.K), 0)
-        pnl += payoff  # Note we sell the option here
+            pnl += inc_pnl + delta * spot_change
 
         return pnl
 
@@ -188,7 +191,7 @@ class EuropeanOption(Model, Hyperparams):
         pnl = self.compute_pnl(init_spot)
         n_pct = int((100 - self.pctile) / 100 * self.batch_size)
         pnl_past_cutoff = tf.nn.top_k(-pnl, n_pct)[0]
-        return tf.reduce_mean(pnl_past_cutoff) / init_spot
+        return tf.reduce_mean(pnl_past_cutoff)
 
     @tf.function
     def compute_mean_pnl(self, init_spot):
@@ -229,6 +232,7 @@ class EuropeanOption(Model, Hyperparams):
         uh_pnls = np.zeros(n_paths, dtype=np.float32)
         nn_pnls = np.zeros(n_paths, dtype=np.float32)
         bs_pnls = np.zeros(n_paths, dtype=np.float32)
+        account = np.zeros(n_paths, dtype=np.float32) + self.principal  # Every path represents an infinite number of accounts
 
         # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
         # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
@@ -239,17 +243,27 @@ class EuropeanOption(Model, Hyperparams):
             t = time_index * self.dt
             spot = spots[time_index]
 
+            # Compute deltas
             input_time = tf.constant([t] * n_paths)
             nn_input = tf.stack([spot, input_time], 1)
             nn_delta = self.compute_hedge_delta(nn_input)[:, 0].numpy()
+            nn_delta = np.minimum(nn_delta, 0)  # pylint: disable=assignment-from-no-return
+            nn_delta *= (1 - np.exp(-self.lam * (self.texp - t))) * self.principal
 
-            bs_delta = -self.psi * analytics.calc_opt_delta(self.is_call, spot, self.K, self.texp - t, self.vol, 0, 0)
+            bs_delta = analytics.calc_delta(self.texp, t, self.lam, self.vol, self.fee, self.gmdb, account, spot)
+
+            # Compute step updates
+            account = self.principal * spot / self.S0 * np.exp(-self.fee * t)
+            fee = self.fee * self.dt * account * np.exp(-self.lam * t)
+            payout = self.lam * self.dt * np.maximum(self.gmdb - account, 0) * np.exp(-self.lam * t)
+            inc_pnl = fee - payout
 
             # 2. Compute updates at end of interval
             # Record incremental pnl changes over the interval
             spot_change = spots[time_index + 1] - spot
-            nn_pnls += nn_delta * spot_change
-            bs_pnls += bs_delta * spot_change
+            uh_pnls += inc_pnl
+            nn_pnls += inc_pnl + nn_delta * spot_change
+            bs_pnls += inc_pnl + bs_delta * spot_change
 
             if verbose != 0:
                 log.info(
@@ -265,15 +279,13 @@ class EuropeanOption(Model, Hyperparams):
                 with writer.as_default():
                     tf.summary.histogram('nn_delta', nn_delta, step=time_index)
                     tf.summary.histogram('bs_delta', bs_delta, step=time_index)
+                    tf.summary.histogram('uh_pnls', uh_pnls, step=time_index)
                     tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
                     tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
                     tf.summary.histogram('spot', spot, step=time_index)
-
-        # Compute the payoff and some metrics
-        payoff = self.psi * np.maximum(self.phi * (spots[-1] - self.K), 0)
-        uh_pnls += payoff
-        nn_pnls += payoff
-        bs_pnls += payoff
+                    tf.summary.histogram('fee', fee, step=time_index)
+                    tf.summary.histogram('payout', payout, step=time_index)
+                    tf.summary.histogram('inc_pnl', inc_pnl, step=time_index)
 
         if write_to_tensorboard:
             writer.flush()

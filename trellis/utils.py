@@ -17,11 +17,7 @@ log = logging.getLogger(__name__)
 
 
 def disable_gpu():
-    """Disables GPU in TensorFlow. Must be called before importing TensorFlow"""
-
-    if 'tensorflow' in sys.modules:
-        raise RuntimeError('disable_gpu imported after tensorflow')
-
+    """Disables GPU in TensorFlow. Must be called before initialising TensorFlow."""
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 

@@ -13,7 +13,7 @@ from tensorflow.python.keras.callbacks import CallbackList  # pylint: disable=no
 from tensorflow.python.keras.callbacks import configure_callbacks  # pylint: disable=no-name-in-module, import-error
 import tensorflow as tf
 
-from utils import calc_expected_shortfall, get_duration_desc
+from trellis.utils import calc_expected_shortfall, get_duration_desc
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)

@@ -8,11 +8,25 @@ Trellis was originally developed by engineers at [Beacon Platform](https://beaco
 
 If you are using this in your own project or research, we would be interested to hear from you.
 
+## Installation
+
+Trellis is available on PyPi, simply install with `pip`.
+
+    pip install beacon-trellis
+
+Note that only TensorFlow version 2.1.0 is currently supported.
+
+To use, simply
+
+    import trellis
+
+See `dh_european_option.py` and `dh_variable_annuity.py` for examples of how to use the models and visualisations provided.
+
 ## Coming Soon
 
-- PyPi package
-- ReadTheDocs documentation
 - Example Jupyter Notebooks
+- TensorFlow 2.2.0 support
+- ReadTheDocs documentation
 
 ## Contribution guidelines
 

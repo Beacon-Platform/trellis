@@ -4,5 +4,5 @@
 
 """Deep hedging models."""
 
-from models.european_option.model import EuropeanOption
-from models.variable_annuity.model import VariableAnnuity
+from trellis.models.european_option.model import EuropeanOption
+from trellis.models.variable_annuity.model import VariableAnnuity

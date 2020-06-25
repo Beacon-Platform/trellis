@@ -4,7 +4,7 @@
 
 """Deep hedging example entry-point for pricing a vanilla option under BS."""
 
-from utils import disable_gpu
+from trellis.utils import disable_gpu
 
 disable_gpu()  # Call first
 
@@ -13,11 +13,11 @@ import logging
 import numpy as np
 import tensorflow as tf
 
-import models.european_option.analytics as analytics
-from models import EuropeanOption
-from models.utils import set_seed, estimate_expected_shortfalls
-from plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
-from utils import get_progressive_min
+import trellis.models.european_option.analytics as analytics
+from trellis.models import EuropeanOption
+from trellis.models.utils import set_seed, estimate_expected_shortfalls
+from trellis.plotting import ResultTypes, plot_heatmap, plot_deltas, plot_loss, plot_pnls
+from trellis.utils import get_progressive_min
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)

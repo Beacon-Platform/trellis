@@ -7,7 +7,7 @@
 import numpy as np
 import scipy
 
-import models.european_option.analytics as option_analytics
+from trellis.models.european_option import analytics as option_analytics
 
 
 def calc_fair_fee(texp, gmdb, S0, vol, lam):
@@ -34,7 +34,7 @@ def calc_fair_fee(texp, gmdb, S0, vol, lam):
     return float(fair_fee)
 
 
-def compute_delta(texp, start_time, lam, vol, fee, gmdb, account, spot):
+def calc_delta(texp, start_time, lam, vol, fee, gmdb, account, spot):
     """Delta to put on against the VA portfolio"""
 
     t_fwd = texp - start_time

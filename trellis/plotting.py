@@ -14,7 +14,7 @@ import numpy as np
 import scipy
 import seaborn as sns
 
-from utils import get_duration_desc
+from trellis.utils import get_duration_desc
 
 sns.set(style='darkgrid', palette='deep')
 plt.rcParams['figure.figsize'] = (8, 6)
@@ -112,8 +112,9 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
     n_spots = 1000
 
     for t, ax in zip(ts, axes):
+        spot_min = model.S0 / spot_fact
         spot_max = model.S0 * spot_fact
-        test_spot = np.linspace(0.01, spot_max, n_spots).astype(np.float32)
+        test_spot = np.linspace(spot_min, spot_max, n_spots).astype(np.float32)
         test_delta = compute_nn_delta(model, t, test_spot)
         est_delta = compute_bs_delta(model, t, test_spot)
 
@@ -122,7 +123,7 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
 
         # Add a subsplot
         ax.set_title('Calendar time {:.2f} years'.format(t))
-        ax.set_xlim([0, spot_max])
+        ax.set_xlim([spot_min, spot_max])
         (bs_plot,) = ax.plot(test_spot, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
         (nn_plot,) = ax.plot(test_spot, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
 

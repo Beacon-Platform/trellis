@@ -6,8 +6,6 @@
 
 from utils import disable_gpu
 
-disable_gpu()  # Call first
-
 import logging
 
 import numpy as np

@@ -242,8 +242,7 @@ class HeatrateOption(Model, Hyperparams):
     @tf.function
     def generate_random_init_spot(self):
         # TODO does this belong here?
-        r_P = tf.random.normal((1,), 0, 2.0 * self.vol_P * self.texp ** 0.5)[0]
-        r_G = tf.random.normal((1,), 0, 2.0 * self.vol_G * self.texp ** 0.5)[0]
+        r_P,r_G = tf.random.normal((2,), 0, 2.0 * self.vol_P * self.texp ** 0.5)
 
         S_P = self.SP0 * tf.exp(-self.vol_P * self.vol_P * self.texp / 2.0 + r_P)
         S_G = self.SG0 * tf.exp(-self.vol_G * self.vol_G * self.texp / 2.0 + r_G)
@@ -293,22 +292,17 @@ class HeatrateOption(Model, Hyperparams):
 
             input_time = tf.constant([t] * n_paths)
             nn_input = tf.stack([spot_power, spot_gas, input_time], 1)
-
-            nn_delta_power = self.compute_hedge_delta(nn_input)[:, 0].numpy()
-            nn_delta_gas = self.compute_hedge_delta(nn_input)[:, 1].numpy()
-
-            bs_delta_power = (
-                -self.psi
-                * analytics.calc_opt_delta(
-                    self.is_call, spot_power, spot_gas, self.K, self.H, self.texp - t, self.vol_P, self.vol_G, 0, self.rho
-                )[0]
+            nn_deltas= self.compute_hedge_delta(nn_input)
+            nn_delta_power = nn_deltas[:, 0].numpy()
+            nn_delta_gas = nn_deltas[:, 1].numpy()
+            
+            bs_deltas = analytics.calc_opt_delta(
+                            self.is_call, spot_power, spot_gas, self.K, self.H, self.texp - t, self.vol_P, self.vol_G, 0, self.rho
             )
-            bs_delta_gas = (
-                -self.psi
-                * analytics.calc_opt_delta(
-                    self.is_call, spot_power, spot_gas, self.K, self.H, self.texp - t, self.vol_P, self.vol_G, 0, self.rho
-                )[1]
-            )
+
+            bs_delta_power = -self.psi*bs_deltas[0]
+
+            bs_delta_gas = -self.psi*bs_deltas[1]
 
             """Compute updates at end of interval"""
             # Advance MC sim

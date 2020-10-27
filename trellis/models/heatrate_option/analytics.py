@@ -10,7 +10,7 @@ import numpy as np
 from scipy.stats import norm
 
 
-def calc_opt_price(is_call, spot_power, spot_gas, strike, H, texp, vol_P, vol_G, rd, rho):
+def calc_opt_price(is_call, spot_power, spot_gas, strike, H, texp, sigma_P, sigma_G, rd, rho):
     """Calculates option price of a heat rate option
 
     Parameters

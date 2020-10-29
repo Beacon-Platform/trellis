@@ -146,8 +146,6 @@ def plot_deltas_heatrate(
     f, axes = plt.subplots(2, 2, sharey=True, sharex=True)
     f.suptitle('Delta hedge ' + deltatype + ' vs spot ' + spottype + ' vs time to maturity')
     axes = axes.flatten()
-    # spot_power_fact = np.exp(3 * model.vol_P * model.texp ** 0.5)
-    # spot_gas_fact = np.exp(3 * model.vol_G * model.texp ** 0.5)
     ts = [0.0, model.texp * 0.25, model.texp * 0.5, model.texp * 0.95]
     n_spots = 1000
 

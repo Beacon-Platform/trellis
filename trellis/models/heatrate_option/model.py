@@ -10,9 +10,9 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from models.base import Model, HyperparamsBase
-import models.heatrate_option.analytics as analytics
-from utils import calc_expected_shortfall, get_duration_desc
+from trellis.models.base import Model, HyperparamsBase
+import trellis.models.heatrate_option.analytics as analytics
+from trellis.utils import calc_expected_shortfall, get_duration_desc
 
 
 log = logging.getLogger(__name__)

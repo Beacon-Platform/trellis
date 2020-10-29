@@ -30,7 +30,7 @@ def calc_opt_price(is_call, spot_power, spot_gas, strike, H, texp, sigma_P, sigm
     sigma_P : float
         Volatility of returns of the power asset (σ_P)
     sigma_G : float
-        Volatility of returns of the gas asset (σ_P)
+        Volatility of returns of the gas asset (σ_G)
     rd : float
         Risk free rate (r)
     rho: float
@@ -86,7 +86,7 @@ def calc_opt_delta(is_call, spot_power, spot_gas, strike, H, texp, sigma_P, sigm
     sigma_P : float
         Volatility of returns of the power asset (σ_P)
     sigma_G : float
-        Volatility of returns of the gas asset (σ_P)
+        Volatility of returns of the gas asset (σ_G)
     rd : float
         Risk free rate (r)
     rho: float
@@ -147,7 +147,7 @@ def calc_d1(spot_power, spot_gas, strike, H, texp, sigma_P, sigma_G, rd, rho):
     sigma_P : float
         Volatility of returns of the power asset (σ_P)
     sigma_G : float
-        Volatility of returns of the gas asset (σ_P)
+        Volatility of returns of the gas asset (σ_G)
     rd : float
         Risk free rate (r)
     rho: float

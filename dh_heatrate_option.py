@@ -56,11 +56,10 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
 
         def compute_nn_delta(model, t, spot_power, spot_gas, deltatype):
             nn_input = np.transpose(np.array([spot_power, spot_gas, [t] * len(spot_power)], dtype=np.float32))
-
-            if deltatype == 'power':
-                return model.compute_hedge_delta(nn_input)[:, 0].numpy()
-            else:
-                return model.compute_hedge_delta(nn_input)[:, 1].numpy()
+            
+            output_index = 0 if delta_type == 'power' else 1
+            
+            return model.compute_hedge_delta(nn_input)[:, output_index].numpy()
 
         def compute_bs_delta(model, t, spot_power, spot_gas, deltatype):
             # The hedge will have the opposite sign as the option we are hedging,

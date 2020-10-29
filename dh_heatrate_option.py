@@ -10,11 +10,11 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-import models.heatrate_option.analytics as analytics
-from models.heatrate_option.model import HeatrateOption
-from models.utils import set_seed, estimate_expected_shortfalls
-from plotting import ResultTypes, plot_heatmap, plot_deltas_heatrate, plot_loss, plot_pnls
-from utils import get_progressive_min
+import trellis.models.heatrate_option.analytics as analytics
+from trellis.models.heatrate_option.model import HeatrateOption
+from trellis.models.utils import set_seed, estimate_expected_shortfalls
+from trellis.plotting import ResultTypes, plot_heatmap, plot_deltas_heatrate, plot_loss, plot_pnls
+from trellis.utils import get_progressive_min
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)

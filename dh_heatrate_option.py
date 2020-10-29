@@ -4,8 +4,6 @@
 
 """Deep hedging example entry-point for pricing a heat rate option under BS."""
 
-from utils import disable_gpu
-
 import logging
 
 import numpy as np

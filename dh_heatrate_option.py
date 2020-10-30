@@ -27,11 +27,13 @@ def get_callbacks(model):
     ]
 
 
-def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_plot=True, **hparams):
+def run_once(filenames,do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_plot=True, **hparams):
     """Trains and tests a model, and displays some plots.
 
     Parameters
     ----------
+    filenames : list
+        names of delta plots
     do_train : bool
         Actually train the model
     show_loss_plot : bool
@@ -73,10 +75,10 @@ def run_once(do_train=True, show_loss_plot=True, show_delta_plot=True, show_pnl_
             else:
                 return -model.psi * deltas[1]
 
-        plot_deltas_heatrate(model, compute_nn_delta, compute_bs_delta, 'power', 'power')
-        plot_deltas_heatrate(model, compute_nn_delta, compute_bs_delta, 'power', 'gas')
-        plot_deltas_heatrate(model, compute_nn_delta, compute_bs_delta, 'gas', 'power')
-        plot_deltas_heatrate(model, compute_nn_delta, compute_bs_delta, 'gas', 'gas')
+        plot_deltas_heatrate(filenames[0],model, compute_nn_delta, compute_bs_delta, 'power', 'power')
+        plot_deltas_heatrate(filenames[1],model, compute_nn_delta, compute_bs_delta, 'power', 'gas')
+        plot_deltas_heatrate(filenames[2],model, compute_nn_delta, compute_bs_delta, 'gas', 'power')
+        plot_deltas_heatrate(filenames[3],model, compute_nn_delta, compute_bs_delta, 'gas', 'gas')
 
     if show_pnl_plot:
         log.info('Testing on %d paths', model.n_test_paths)

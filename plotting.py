@@ -133,6 +133,7 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
 
 
 def plot_deltas_heatrate(
+    filename,
     model,
     compute_nn_delta,
     compute_bs_delta,
@@ -177,7 +178,7 @@ def plot_deltas_heatrate(
     f.text(0.5, 0.04, 'Spot ' + spottype, ha='center')
     f.text(0.04, 0.5, 'Delta ' + deltatype, ha='center', rotation='vertical')
     plt.tight_layout(rect=[0.04, 0.04, 1, 0.95])
-    plt.show()
+    plt.savefig(filename)
 
 
 def plot_pnls(pnls, types, *, trim_tails=0):

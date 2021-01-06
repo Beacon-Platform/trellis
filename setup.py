@@ -72,7 +72,7 @@ setup(
         'numpy>=1.16.0',
         'scipy>=1.4.1',
         'seaborn>=0.9.0',
-        'tensorflow==2.1.0',
+        'tensorflow==2.4.0',
     ],
     license='MIT',
     classifiers=[

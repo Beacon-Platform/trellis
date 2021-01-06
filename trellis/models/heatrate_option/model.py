@@ -12,6 +12,7 @@ import tensorflow as tf
 
 from trellis.models.base import Model, HyperparamsBase
 import trellis.models.heatrate_option.analytics as analytics
+from trellis.random_processes import gbm2
 from trellis.utils import calc_expected_shortfall, get_duration_desc
 
 
@@ -41,7 +42,7 @@ class Hyperparams(HyperparamsBase):
     vol_G = 0.6  # Volatility (gas)
     rho = 0.8  # Correlation between power and gas prices
 
-    texp = 1  # Fixed tenor to expiration, in years
+    texp = 1.0  # Fixed tenor to expiration, in years
     K = 15.0  # option strike price
     is_call = True  # True: call option; False: put option
     is_buy = False  # True: buying a call/put; False: selling a call/put
@@ -163,56 +164,36 @@ class HeatrateOption(Model, Hyperparams):
         we're short the option so that (absent hedging) there's a -ve PNL.
         """
 
-        init_spot_power, init_spot_gas = init_spot
-
         pnl = tf.zeros(self.batch_size, dtype=tf.float32)
 
-        spot_power = tf.zeros(self.batch_size, dtype=tf.float32) + init_spot_power
-        spot_gas = tf.zeros(self.batch_size, dtype=tf.float32) + init_spot_gas
-
-        log_spot_power = tf.zeros(self.batch_size, dtype=tf.float32)
-        log_spot_gas = tf.zeros(self.batch_size, dtype=tf.float32)
+        mu = (self.mu_P, self.mu_G)
+        sigma = (self.vol_P, self.vol_G)
+        spots = gbm2(init_spot, mu, sigma, self.dt, self.rho, self.n_steps, self.batch_size)
+        spot = tf.zeros((self.batch_size, 2), dtype=tf.float32)
 
         # Run through the MC sim, generating path values for spots along the way
-        for time_index in tf.range(self.n_steps, dtype=tf.float32):
-            """Compute updates at start of interval"""
-            t = time_index * self.dt
-
+        # for time_index in tf.range(self.n_steps, dtype=tf.float32):
+        for time_index in tf.range(self.n_steps):
+            # 1. Compute updates at start of interval
             # Retrieve the neural network output, treating it as the delta hedge notional
             # at the start of the timestep. In the risk neutral limit, Black-Scholes is equivallent
             # to the minimising expected shortfall. Therefore, by minimising expected shortfall as
             # our loss function, the output of the network is trained to approximate Black-Scholes delta.
-            input_time = tf.fill([self.batch_size], t)
-            inputs = tf.stack([spot_power, spot_gas, input_time], 1)
+            t = tf.cast(time_index, dtype=tf.float32) * self.dt
+            spot = spots[time_index, :, :]
+            input_time = tf.expand_dims(tf.fill([self.batch_size], t), 1)
+            inputs = tf.concat([spot, input_time], 1)
+            delta = self.compute_hedge_delta(inputs)
 
-            delta_power = self.compute_hedge_delta(inputs)[:, 0]
-            delta_gas = self.compute_hedge_delta(inputs)[:, 1]
-
-            """Compute updates at end of interval"""
-
-            rs1 = tf.random.normal([self.batch_size], 0, self.dt ** 0.5)
-            rs2 = tf.random.normal([self.batch_size], 0, self.dt ** 0.5)
-
-            w1 = rs1
-            w2 = self.rho * w1 + ((1 - self.rho * self.rho) ** 0.5) * rs2
-
-            log_spot_power += (self.mu_P - self.vol_P * self.vol_P / 2.0) * self.dt + self.vol_P * w1
-            log_spot_gas += (self.mu_G - self.vol_G * self.vol_G / 2.0) * self.dt + self.vol_G * w2
-
-            new_spot_power = init_spot_power * tf.math.exp(log_spot_power)
-            new_spot_gas = init_spot_gas * tf.math.exp(log_spot_gas)
-
-            spot_change_power = new_spot_power - spot_power
-            spot_change_gas = new_spot_gas - spot_gas
-
-            # Update the PNL and dynamically delta hedge
-            pnl += delta_power * spot_change_power + delta_gas * spot_change_gas
-
-            # Remember values for the next step
-            spot_power = new_spot_power
-            spot_gas = new_spot_gas
+            # 2. Compute updates at end of interval
+            # Delta hedge and record the incremental pnl changes over the interval
+            # We calculate delta_power * spot_change_power + delta_gas * spot_change_gas
+            spot_change = spots[time_index + 1, :, :] - spot
+            pnl += delta[:, 0] * spot_change[:, 0] + delta[:, 1] * spot_change[:, 1]
 
         # Calculate the final payoff
+        spot_power = spot[:, 0]
+        spot_gas = spot[:, 1]
         payoff = self.psi * tf.maximum(self.phi * (spot_power - self.H * spot_gas - self.K), 0)
         pnl += payoff  # Note we sell the option here
 
@@ -225,8 +206,6 @@ class HeatrateOption(Model, Hyperparams):
         Note that we do *not* expect this to minimize to zero.
         """
         # TODO move to losses module as ExpectedShortfall?
-        init_spot_power, init_spot_gas = init_spot
-
         pnl = self.compute_pnl(init_spot)
         n_pct = int((100 - self.pctile) / 100 * self.batch_size)
         pnl_past_cutoff = tf.nn.top_k(-pnl, n_pct)[0]
@@ -242,12 +221,12 @@ class HeatrateOption(Model, Hyperparams):
     @tf.function
     def generate_random_init_spot(self):
         # TODO does this belong here?
-        r_P, r_G = tf.random.normal((2,), 0, 2.0 * self.vol_P * self.texp ** 0.5)
+        r = tf.random.normal((2,), 0, 2.0 * self.vol_P * self.texp ** 0.5)
 
-        S_P = self.SP0 * tf.exp(-self.vol_P * self.vol_P * self.texp / 2.0 + r_P)
-        S_G = self.SG0 * tf.exp(-self.vol_G * self.vol_G * self.texp / 2.0 + r_G)
+        S_P = self.SP0 * tf.exp(-self.vol_P * self.vol_P * self.texp / 2.0 + r[0])
+        S_G = self.SG0 * tf.exp(-self.vol_G * self.vol_G * self.texp / 2.0 + r[1])
 
-        return (S_P, S_G)
+        return S_P, S_G
 
     def simulate(self, n_paths, *, verbose=1, write_to_tensorboard=False):
         """Simulate the trading strategy and return the PNLs.
@@ -272,62 +251,44 @@ class HeatrateOption(Model, Hyperparams):
         if write_to_tensorboard:
             writer = tf.summary.create_file_writer('logs/')
 
-        log_spot_power = np.zeros(n_paths, dtype=np.float32)
-        log_spot_gas = np.zeros(n_paths, dtype=np.float32)
-
         uh_pnls = np.zeros(n_paths, dtype=np.float32)
         nn_pnls = np.zeros(n_paths, dtype=np.float32)
         bs_pnls = np.zeros(n_paths, dtype=np.float32)
 
-        spot_power = np.zeros(n_paths, dtype=np.float32) + self.SP0
-        spot_gas = np.zeros(n_paths, dtype=np.float32) + self.SG0
+        S0 = (self.SP0, self.SG0)
+        mu = (self.mu_P, self.mu_G)
+        sigma = (self.vol_P, self.vol_G)
+        spots = gbm2(S0, mu, sigma, self.dt, self.rho, self.n_steps, n_paths)
+        spot = tf.zeros((n_paths, 2), dtype=tf.float32)
 
         # Run through the MC sim, generating path values for spots along the way. This is just like a regular MC
         # sim to price a derivative - except that the price is *not* the expected value - it's the loss function
         # value. That handles both the conversion from real world to "risk neutral" and unhedgeable risk due to
         # eg discrete hedging (which is the only unhedgeable risk in this example, but there could be anything generally).
         for time_index in range(self.n_steps):
-            """Compute updates at start of interval"""
+            # 1. Compute updates at start of interval
             t = time_index * self.dt
+            spot = spots[time_index, :, :].numpy()
+            spot_power = spot[:, 0]
+            spot_gas = spot[:, 1]
 
-            input_time = tf.constant([t] * n_paths)
-            nn_input = tf.stack([spot_power, spot_gas, input_time], 1)
-            nn_deltas= self.compute_hedge_delta(nn_input)
-            nn_delta_power = nn_deltas[:, 0].numpy()
-            nn_delta_gas = nn_deltas[:, 1].numpy()
-            
-            bs_deltas = analytics.calc_opt_delta(
+            input_time = tf.expand_dims(tf.constant([t] * n_paths), 1)
+            nn_input = tf.concat([spot, input_time], 1)
+            nn_delta = self.compute_hedge_delta(nn_input).numpy()
+            nn_delta_power = nn_delta[:, 0]
+            nn_delta_gas = nn_delta[:, 1]
+
+            bs_delta = -self.psi * analytics.calc_opt_delta(
                 self.is_call, spot_power, spot_gas, self.K, self.H, self.texp - t, self.vol_P, self.vol_G, 0, self.rho
             )
+            bs_delta_power, bs_delta_gas = bs_delta
 
-            bs_delta_power = -self.psi*bs_deltas[0]
-
-            bs_delta_gas = -self.psi*bs_deltas[1]
-
-            """Compute updates at end of interval"""
-            # Advance MC sim
-            rs1 = np.random.normal(0, self.dt ** 0.5, n_paths)
-            rs2 = np.random.normal(0, self.dt ** 0.5, n_paths)
-
-            w1 = rs1
-            w2 = self.rho * w1 + ((1 - self.rho * self.rho) ** 0.5) * rs2
-
-            log_spot_power += (self.mu_P - self.vol_P * self.vol_P / 2.0) * self.dt + self.vol_P * w1
-            log_spot_gas += (self.mu_G - self.vol_G * self.vol_G / 2.0) * self.dt + self.vol_G * w2
-
-            new_spot_power = self.SP0 * np.exp(log_spot_power)
-            new_spot_gas = self.SG0 * np.exp(log_spot_gas)
-
-            spot_change_power = new_spot_power - spot_power
-            spot_change_gas = new_spot_gas - spot_gas
-
-            # Get the PNLs of the hedges over the interval
-            nn_pnls += nn_delta_power * spot_change_power + nn_delta_gas * spot_change_gas
-            bs_pnls += bs_delta_power * spot_change_power + bs_delta_gas * spot_change_gas
-
-            # Remember stuff for the next time step
-            spot_power = new_spot_power
-            spot_gas = new_spot_gas
+            # 2. Compute updates at end of interval
+            # Record incremental pnl changes over the interval
+            # We calculate delta_power * spot_change_power + delta_gas * spot_change_gas
+            spot_change = spots[time_index + 1, :, :] - spot
+            nn_pnls += nn_delta_power * spot_change[:, 0] + nn_delta_gas * spot_change[:, 1]
+            bs_pnls += bs_delta_power * spot_change[:, 0] + bs_delta_gas * spot_change[:, 1]
 
             if verbose != 0:
                 log.info(
@@ -351,13 +312,10 @@ class HeatrateOption(Model, Hyperparams):
                     tf.summary.histogram('bs_delta_gas', bs_delta_gas, step=time_index)
                     tf.summary.histogram('nn_pnls', nn_pnls, step=time_index)
                     tf.summary.histogram('bs_pnls', bs_pnls, step=time_index)
-                    tf.summary.histogram('log_spot_power', log_spot_power, step=time_index)
                     tf.summary.histogram('spot_power', spot_power, step=time_index)
-                    tf.summary.histogram('log_spot_gas', log_spot_gas, step=time_index)
                     tf.summary.histogram('spot_gas', spot_gas, step=time_index)
 
         # Compute the payoff and some metrics
-
         payoff = self.psi * np.maximum(self.phi * (spot_power - self.H * spot_gas - self.K), 0)
         uh_pnls += payoff
         nn_pnls += payoff

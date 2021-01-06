@@ -134,6 +134,55 @@ def plot_deltas(model, compute_nn_delta, compute_bs_delta, *, verbose=1):
     plt.show()
 
 
+def plot_deltas_heatrate(
+    filename, model, compute_nn_delta, compute_bs_delta, delta_type, spot_type, *, verbose=1,
+):
+    """Plot out four plots of delta (power/gas) vs spot (power/gas) for a range of calendar times"""
+
+    f, axes = plt.subplots(2, 2, sharey=True, sharex=True)
+    f.suptitle('Delta hedge ' + delta_type + ' vs spot ' + spot_type + ' vs time to maturity')
+    axes = axes.flatten()
+    ts = [0.0, model.texp * 0.25, model.texp * 0.5, model.texp * 0.95]
+    n_spots = 1000
+
+    for t, ax in zip(ts, axes):
+        if spot_type == 'power':
+            spot_min_power = model.SP0 - 10
+            spot_max_power = model.SP0 + 10
+            spot_min_gas = spot_max_gas = model.SG0
+        else:
+            spot_min_gas = model.SG0 - 10
+            spot_max_gas = model.SG0 + 10
+            spot_min_power = spot_max_power = model.SP0
+
+        test_spot_power = np.linspace(spot_min_power, spot_max_power, n_spots).astype(np.float32)
+        test_spot_gas = np.linspace(spot_min_gas, spot_max_gas, n_spots).astype(np.float32)
+
+        test_delta = compute_nn_delta(model, t, test_spot_power, test_spot_gas, delta_type)
+        est_delta = compute_bs_delta(model, t, test_spot_power, test_spot_gas, delta_type)
+
+        if verbose != 0:
+            log.info('Delta: mean = % .5f, std = % .5f', test_delta.mean(), test_delta.std())
+
+        # Add a subsplot
+        ax.set_title('Calendar time {:.2f} years'.format(t))
+
+        if spot_type == 'power':
+            ax.set_xlim([spot_min_power, spot_max_power])
+            (bs_plot,) = ax.plot(test_spot_power, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
+            (nn_plot,) = ax.plot(test_spot_power, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
+        else:
+            ax.set_xlim([spot_min_gas, spot_max_gas])
+            (bs_plot,) = ax.plot(test_spot_gas, est_delta, color=ResultTypes.BLACK_SCHOLES.colour)
+            (nn_plot,) = ax.plot(test_spot_gas, test_delta, color=ResultTypes.DEEP_HEDGING.colour)
+
+    ax.legend([bs_plot, nn_plot], [ResultTypes.BLACK_SCHOLES.label, ResultTypes.DEEP_HEDGING.label])
+    f.text(0.5, 0.04, 'Spot ' + spot_type, ha='center')
+    f.text(0.04, 0.5, 'Delta ' + delta_type, ha='center', rotation='vertical')
+    plt.tight_layout(rect=[0.04, 0.04, 1, 0.95])
+    plt.savefig(filename)
+
+
 def plot_pnls(pnls, types, *, trim_tails=0):
     """Plot histogram comparing pnls
     
@@ -145,6 +194,7 @@ def plot_pnls(pnls, types, *, trim_tails=0):
         Percentile to trim from each tail when plotting
     """
 
+    _ = plt.figure()
     hist_range = (np.percentile(pnls, trim_tails), np.percentile(pnls, 100 - trim_tails))
 
     for pnl, rtype in zip(pnls, types):

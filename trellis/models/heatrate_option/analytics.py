@@ -50,7 +50,9 @@ def calc_opt_price(is_call, spot_power, spot_gas, strike, H, texp, sigma_P, sigm
         return sign * np.maximum(int_val, 0)
 
     vol = np.sqrt(
-        sigma_P ** 2 + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2 - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
+        sigma_P ** 2
+        + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2
+        - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
     )
 
     # Otherwise calculate the standard value
@@ -110,7 +112,9 @@ def calc_opt_delta(is_call, spot_power, spot_gas, strike, H, texp, sigma_P, sigm
         return np.where(int_val < 0, 0, sign)
 
     vol = np.sqrt(
-        sigma_P ** 2 + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2 - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
+        sigma_P ** 2
+        + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2
+        - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
     )
 
     d1 = calc_d1(spot_power, spot_gas, strike, H, texp, sigma_P, sigma_G, rd, rho)
@@ -161,7 +165,9 @@ def calc_d1(spot_power, spot_gas, strike, H, texp, sigma_P, sigma_G, rd, rho):
     """
 
     vol = np.sqrt(
-        sigma_P ** 2 + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2 - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
+        sigma_P ** 2
+        + (sigma_G * (spot_gas / (H * spot_gas + strike))) ** 2
+        - 2 * rho * sigma_P * sigma_G * (spot_gas / (H * spot_gas + strike))
     )
 
     return (np.log(spot_power / (H * spot_gas + strike)) + (vol * vol / 2.0) * texp) / (vol * np.sqrt(texp))

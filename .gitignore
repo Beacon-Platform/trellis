@@ -9,6 +9,9 @@ dist/
 
 checkpoints/
 logs/
+output/
+plots/
+results/
 
 checkpoint
 *.data-*

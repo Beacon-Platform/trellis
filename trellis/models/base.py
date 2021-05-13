@@ -82,7 +82,6 @@ class Model(tf.keras.Sequential):
 
         if not isinstance(callbacks, CallbackList):
             callbacks = list(callbacks or [])
-
             callbacks = CallbackList(
                 callbacks,
                 add_history=True,
@@ -91,7 +90,8 @@ class Model(tf.keras.Sequential):
                 do_validation=True,
                 verbose=verbose,
                 epochs=self.n_epochs,
-                steps=self.epoch_size)
+                steps=self.epoch_size,
+            )
 
         # Use the Adam optimizer y default, which is gradient descent which also evolves
         # the learning rate appropriately (the learning rate passed in is the initial

@@ -9,8 +9,7 @@ import logging
 import os
 import time
 
-from tensorflow.python.keras.callbacks import CallbackList  # pylint: disable=no-name-in-module, import-error
-from tensorflow.python.keras.callbacks import configure_callbacks  # pylint: disable=no-name-in-module, import-error
+from tensorflow.keras.callbacks import CallbackList
 import tensorflow as tf
 
 from trellis.utils import calc_expected_shortfall, get_duration_desc
@@ -83,14 +82,15 @@ class Model(tf.keras.Sequential):
 
         if not isinstance(callbacks, CallbackList):
             callbacks = list(callbacks or [])
-            callbacks = configure_callbacks(
+            callbacks = CallbackList(
                 callbacks,
-                self,
+                add_history=True,
+                add_progbar=verbose != 0,
+                model=self,
                 do_validation=True,
-                batch_size=self.batch_size,
-                epochs=self.n_epochs,
-                steps_per_epoch=self.epoch_size,
                 verbose=verbose,
+                epochs=self.n_epochs,
+                steps=self.epoch_size,
             )
 
         # Use the Adam optimizer y default, which is gradient descent which also evolves

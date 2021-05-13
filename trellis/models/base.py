@@ -88,6 +88,7 @@ class Model(tf.keras.Sequential):
                 add_history=True,
                 add_progbar=verbose != 0,
                 model=self,
+                do_validation=True,
                 verbose=verbose,
                 epochs=self.n_epochs,
                 steps=self.epoch_size)
